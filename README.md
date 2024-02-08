@@ -28,6 +28,11 @@ An edge will be created between the two selected vertices.
 ### Notes
 This function relies on Jupyter ipywidgets, so it should work only in web versions of Jupyter.
 
+### Installation instructions
+go to: https://pypi.org/project/pygraphedit/ <br>
+or run:
+> pip install pygraphedit
+
 ### Examples
 ```python
 import networkx as nx
