@@ -18,6 +18,10 @@ class Mode(Enum):
     STRUCTURE = 0
     PROPERTIES = 1
 
+class DrawingMode(Enum):
+    GRAVITY_OFF = False
+    GRAVITY_ON = True
+    FANCY = 2
 
 def mex(arr):
     result = 0
@@ -81,6 +85,7 @@ def edit(graph: nx.Graph):
     visual_graph = VisualGraph(graph, (800, 500))
     CLOSE = False
     mode = Mode.STRUCTURE
+    drawing_mode = DrawingMode.GRAVITY_ON
     is_drag = False
     start_mouse_position = (0, 0)
     actions_to_perform = []
@@ -129,6 +134,16 @@ def edit(graph: nx.Graph):
     labels_info_scrollable = graphics.get_labels_info_scrollable()
     with labels_info_scrollable:
         display(labels_info)
+
+    def physics_select(button_widget):
+        nonlocal visual_graph, drawing_mode
+        button_widget.toggle()
+        if button_widget.active:
+            drawing_mode=DrawingMode.GRAVITY_ON
+        else:
+            drawing_mode=DrawingMode.GRAVITY_OFF
+
+    mode_box.physics_button.on_click(physics_select)
 
     def add_label(button_widget, labels_info: widgets.VBox, visual_graph: VisualGraph, label_name: widgets.Textarea):
         new_label_name = str(label_name.value)
@@ -371,10 +386,10 @@ def edit(graph: nx.Graph):
     graph_physics = GraphPhysics(visual_graph)
 
     def main_loop(visual_graph, physics_button):
-        nonlocal CLOSE
+        nonlocal CLOSE, drawing_mode
         try:
             while not CLOSE:
-                graph_physics.update_physics(1 / 60, physics_button.value)
+                graph_physics.update_physics(1 / 60, drawing_mode.value)
                 graph_physics.normalize_positions()
                 graphics.draw_graph(canvas, visual_graph)
                 time.sleep(1 / 60)
