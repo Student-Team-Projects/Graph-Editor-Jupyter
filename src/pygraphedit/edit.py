@@ -92,7 +92,7 @@ def edit(graph: nx.Graph):
     EPS = 10
     canvas = Canvas(width=800, height=500)
     mode_box = graphics.Menu()
-
+    output_area = widgets.Output()
     def close(button):
         nonlocal CLOSE, main_box
         CLOSE = True
@@ -144,6 +144,18 @@ def edit(graph: nx.Graph):
             drawing_mode=DrawingMode.GRAVITY_OFF
 
     mode_box.physics_button.on_click(physics_select)
+
+    def mode_select(button_widget):
+        nonlocal visual_graph, drawing_mode
+        button_widget.toggle()
+
+        if button_widget.active:
+            # drawing_mode=DrawingMode.FANCY
+            with output_area:
+                    raise NotImplementedError("DrawingMode.FANCY is not yet implemented")
+        else:
+            drawing_mode=DrawingMode.GRAVITY_ON
+    mode_box.mode_button.on_click(mode_select)
 
     def add_label(button_widget, labels_info: widgets.VBox, visual_graph: VisualGraph, label_name: widgets.Textarea):
         new_label_name = str(label_name.value)
@@ -377,10 +389,12 @@ def edit(graph: nx.Graph):
     Event(source=canvas, watched_events=['mouseup']).on_dom_event(perform_in_future(handle_mouseup))
     Event(source=canvas, watched_events=['dblclick']).on_dom_event(perform_in_future(handle_doubleclick))
 
-    main_box = widgets.HBox()
+    h_box = widgets.HBox()
     debug_text = widgets.Textarea()
 
-    main_box.children = ([widgets.VBox((mode_box, labels_info_scrollable)), canvas])
+    h_box.children = ([widgets.VBox((mode_box, labels_info_scrollable)), canvas])
+    main_box = widgets.VBox()
+    main_box.children = (h_box, output_area)
     display(main_box)
     update_labels(labels_info, visual_graph)
     graph_physics = GraphPhysics(visual_graph)
