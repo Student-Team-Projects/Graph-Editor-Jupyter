@@ -2,6 +2,7 @@ from ipycanvas import Canvas, hold_canvas
 from .settings import DRAGGED_NODE_RADIUS, NODE_RADIUS
 from .visual_graph import VisualGraph
 import ipywidgets as widgets
+import math
 
 
 def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
@@ -19,6 +20,13 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
         canvas.line_width = 2
         canvas.stroke_line(*pos1, *pos2)
 
+    def draw_label(pos, label, colorcode="black"):
+        canvas.fill_style = colorcode
+        canvas.font = "bold 16px Arial"
+        canvas.text_align = "center"
+        canvas.text_baseline = "middle"
+        canvas.fill_text(label, pos[0], pos[1])
+
     with hold_canvas():
         clear_canvas()
         for edge in visual_graph.graph.edges:
@@ -28,6 +36,33 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
             draw_vertex(pos,
                         size=(DRAGGED_NODE_RADIUS if node == visual_graph.dragged_node else NODE_RADIUS),
                         colorcode=("red" if node == visual_graph.selected_node else "black"))
+        if visual_graph.show_labels:
+            for (v,d) in visual_graph.graph.nodes(True):
+                pos = visual_graph.coordinates[v].copy()
+                for label in visual_graph.vertex_labels:
+                    if d[label]!="":
+                        pos[1] += 20
+                        label_string = label + ": " + d[label] if label != "" else d[label]
+                        draw_label(pos, label_string, colorcode=("red" if v == visual_graph.selected_node else "black"))
+            for (v1, v2, d) in visual_graph.graph.edges(data=True):
+                pos1 = visual_graph.coordinates[v1]
+                pos2 = visual_graph.coordinates[v2]
+                mid_pos = [(pos1[0] + pos2[0]) / 2, (pos1[1] + pos2[1]) / 2]
+                dx = pos2[0] - pos1[0]
+                dy = pos2[1] - pos1[1]
+                angle = math.atan2(dy, dx) 
+                offset = 20  
+    
+                pos = [
+                    mid_pos[0] + offset * math.cos(angle + math.pi / 2),  
+                    mid_pos[1] + offset * math.sin(angle + math.pi / 2)
+                ]
+    
+                for label in visual_graph.edge_labels:
+                    if d[label] != "":
+                        label_string = label + ": " + d[label] if label != "" else d[label]
+                        draw_label(pos, label_string, colorcode=("red" if (v1, v2) == visual_graph.selected_edge else "black"))
+
 
 
 class SmallButton(widgets.Button):
@@ -67,9 +102,12 @@ class Menu(widgets.HBox):
         self.vert_button = SmallButton(tooltip='Vertices selection enabled/disabled',
                                         icon='circle', active_color='LightGreen', inactive_color='lightcoral', active=True)
 
+        self.labels_button = SmallButton(tooltip='Labels enabled/disabled',
+                                        icon='tag', active_color='LightGreen', inactive_color='lightcoral', active=True)
+
         self.children = ([widgets.HBox((self.struct_button, self.prop_button),
                                        layout=widgets.Layout(border='0.5px solid #000000')),
-                          self.vert_button, self.edge_button, self.physics_button, self.close_button])
+                          self.vert_button, self.edge_button, self.physics_button, self.close_button, self.labels_button])
 
 
 def get_label_style():

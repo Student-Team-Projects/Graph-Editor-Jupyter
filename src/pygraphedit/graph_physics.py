@@ -1,4 +1,3 @@
-import random
 import pymunk
 
 from .settings import NODE_RADIUS
@@ -7,7 +6,6 @@ from .visual_graph import VisualGraph
 VERTEX_BODY_MASS = 1
 VERTEX_BODY_MOMENT = 1
 WALLS_WIDTH = 10
-GRAVITY = (0, 0)
 
 
 def create_border(space, bounds: (int, int)):
@@ -35,18 +33,10 @@ class GraphPhysics:
         self.vertex_body: dict[any, pymunk.Body] = {}
         self.edge_body: dict[any, pymunk.Body] = {}
         self.connection_body = {}
-        
-        width, height = visual_graph.bounds
-        self.center_pos = (width / 2, height / 2)
-        
         for node in visual_graph.graph.nodes:
-            offset = (random.uniform(-10, 10), random.uniform(-10, 10))
-            initial_pos = (self.center_pos[0] + offset[0], self.center_pos[1] + offset[1])
-            self.add_vert(node, initial_pos)
-            
+            self.add_vert(node, visual_graph.coordinates[node])
         for edge in visual_graph.graph.edges:
             self.add_edge(edge[0], edge[1])
-        
         visual_graph.add_node.subscribable.subscribe(self.add_vert)
         visual_graph.remove_node.subscribable.subscribe(self.remove_vert)
         visual_graph.add_edge.subscribable.subscribe(self.add_edge)
@@ -69,8 +59,6 @@ class GraphPhysics:
     def add_vert(self, node, pos: (int, int)):
         body = pymunk.Body(VERTEX_BODY_MASS, VERTEX_BODY_MOMENT)
         body.position = pos
-        body.damping = 0.5
-        
         shape = pymunk.Circle(body, radius=10)  # Adjust the radius as needed
         shape.elasticity = 1.0  # Elasticity of collisions
         shape.friction = 0.0  # Friction of collisions
@@ -89,7 +77,7 @@ class GraphPhysics:
     def remove_vert(self, node):
         self.space.remove(self.vertex_body[node])
         del self.vertex_body[node]
-        for other in self.edge_body[node]:  
+        for other in self.edge_body[node]:
             self.space.remove(self.edge_body[node][other])
             del self.edge_body[other][node]
         for other in self.connection_body[node]:
@@ -116,30 +104,22 @@ class GraphPhysics:
 
     def update_physics(self, dt, physics):
         if physics:
-            for node, body in self.vertex_body.items():
-                resistance = 7.0
-                velocity = body.velocity
-                resistance_force = -resistance * velocity
-                body.apply_force_at_local_point(resistance_force, (0, 0))
-                
             self.space.step(dt)
-            
             for node, body in self.vertex_body.items():
                 self.visual_graph.move_node(node, [body.position.x, body.position.y])
-        
         self.normalize_positions()
 
     def normalize_positions(self):
         for node, node_pos in self.visual_graph.coordinates.items():
             if node_pos[0] < 0:
                 self.visual_graph.move_node(node, [NODE_RADIUS + 10, node_pos[1]])
-                self.vertex_body[node].velocity = [0, 0]
+                self.vertex_body[node].velocity = [0, self.vertex_body[node].velocity.y]
             if node_pos[1] < 0:
                 self.visual_graph.move_node(node, [node_pos[0], NODE_RADIUS + 10])
-                self.vertex_body[node].velocity = [0, 0]
+                self.vertex_body[node].velocity = [self.vertex_body[node].velocity.x, 0]
             if node_pos[0] > self.visual_graph.bounds[0]:
                 self.visual_graph.move_node(node, [self.visual_graph.bounds[0] - NODE_RADIUS - 10, node_pos[1]])
-                self.vertex_body[node].velocity = [0, 0]
+                self.vertex_body[node].velocity = [0, self.vertex_body[node].velocity.y]
             if node_pos[1] > self.visual_graph.bounds[1]:
                 self.visual_graph.move_node(node, [node_pos[0], self.visual_graph.bounds[1] - NODE_RADIUS - 10])
-                self.vertex_body[node].velocity = [0, 0]
+                self.vertex_body[node].velocity = [self.vertex_body[node].velocity.x, 0]
