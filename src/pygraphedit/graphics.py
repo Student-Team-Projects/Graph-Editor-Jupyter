@@ -3,9 +3,18 @@ from .settings import DRAGGED_NODE_RADIUS, NODE_RADIUS
 from .visual_graph import VisualGraph
 import ipywidgets as widgets
 import math
+import sys
 
 
 def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
+    
+    def int_to_color(i):
+        h = hash(str(i)) % (256**3)
+        h1 = h % 256
+        h2 = (h // 256) % 256
+        h3 = (h // (256**2)) % 256
+        out = '#' + hex(h1)[2:] + hex(h2)[2:] + hex(h3)[2:]
+        return out
 
     def clear_canvas():
         canvas.clear()
@@ -36,6 +45,9 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
         
         for node, pos in visual_graph.coordinates.items():
             colorcode = "black"
+            if visual_graph.show_vertex_color:
+                if "color" in visual_graph.graph.nodes[node] and visual_graph.graph.nodes[node]["color"]!="":
+                    colorcode = int_to_color(visual_graph.graph.nodes[node]["color"])
             if node == visual_graph.selected_node:
                     colorcode = "red"
             draw_vertex(pos,
