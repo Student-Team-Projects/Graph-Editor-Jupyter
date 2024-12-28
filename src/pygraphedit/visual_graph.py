@@ -15,11 +15,21 @@ class VisualGraph:
         self.vertex_labels = set()
         self.edge_edit = True
         self.vertex_edit = True
+        self.show_labels = True
 
         self.coordinates = {
             node: [random.randint(0, bounds[0] - 1), random.randint(0, bounds[1] - 1)]
             for node in graph.nodes
         }
+
+        for (_, d) in graph.nodes(True):
+            for l in d:
+                self.vertex_labels.add(l)
+
+        for (_, _, d) in graph.edges(data=True):
+            for l in d:
+                self.edge_labels.add(l)
+
         self.selected_node = None
         self.selected_edge = None
         self.dragged_node = None

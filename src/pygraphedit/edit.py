@@ -131,6 +131,16 @@ def edit(graph: nx.Graph):
     labels_info = widgets.VBox()
     add_label_box = graphics.AddLabelBox()
 
+    def click_toggle_labels(button_widget):
+        nonlocal visual_graph
+        button_widget.toggle()
+        if not button_widget.active:
+            visual_graph.show_labels = False
+        else:
+            visual_graph.show_labels = True
+    
+    mode_box.labels_button.on_click(click_toggle_labels)
+
     labels_info_scrollable = graphics.get_labels_info_scrollable()
     with labels_info_scrollable:
         display(labels_info)
