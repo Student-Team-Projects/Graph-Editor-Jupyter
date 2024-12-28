@@ -27,6 +27,10 @@ class VisualGraph:
             for l in d:
                 self.vertex_labels.add(l)
 
+        for (_, _, d) in graph.edges(data=True):
+            for l in d:
+                self.edge_labels.add(l)
+
         self.selected_node = None
         self.selected_edge = None
         self.dragged_node = None

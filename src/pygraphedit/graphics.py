@@ -13,7 +13,6 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
         h2 = (h // 256) % 256
         h3 = (h // (256**2)) % 256
         out = '#' + hex(h1)[2:] + hex(h2)[2:] + hex(h3)[2:]
-        # print("hashed", (str(i)), "into", out)
         return out
 
     def clear_canvas():
@@ -44,7 +43,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
         for node, pos in visual_graph.coordinates.items():
             colorcode = "black"
             if visual_graph.show_vertex_color:
-                if visual_graph.graph.nodes[node]["color"]!="":
+                if "color" in visual_graph.graph.nodes[node] and visual_graph.graph.nodes[node]["color"]!="":
                     colorcode = int_to_color(visual_graph.graph.nodes[node]["color"])
             if node == visual_graph.selected_node:
                     colorcode = "red"
@@ -56,7 +55,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
             for (v,d) in visual_graph.graph.nodes(True):
                 pos = visual_graph.coordinates[v].copy()
                 for label in visual_graph.vertex_labels:
-                    if d[label]!="":
+                    if label in d and d[label]!="":
                         pos[1] += 20
                         label_string = label + ": " + str(d[label]) if label != "" else str(d[label])
                         draw_label(pos, label_string, colorcode=("red" if v == visual_graph.selected_node else "black"))
@@ -65,7 +64,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
                 pos2 = visual_graph.coordinates[v2]
                 pos = [(pos1[0]+pos2[0])/2, (pos1[1]+pos2[1])/2]
                 for label in visual_graph.edge_labels:
-                    if d[label]!="":
+                    if label in d and d[label]!="":
                         pos[1] += 20
                         label_string = label + ": " + d[label] if label != "" else d[label]
                         draw_label(pos, label_string, colorcode=("red" if (v1,v2) == visual_graph.selected_edge else "black"))
