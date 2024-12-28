@@ -6,6 +6,7 @@ import math
 
 
 def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
+
     def clear_canvas():
         canvas.clear()
         canvas.stroke_style = "black"
@@ -32,17 +33,22 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
         for edge in visual_graph.graph.edges:
             draw_edge(visual_graph.coordinates[edge[0]], visual_graph.coordinates[edge[1]],
                       colorcode=("red" if edge == visual_graph.selected_edge else "black"))
+        
         for node, pos in visual_graph.coordinates.items():
+            colorcode = "black"
+            if node == visual_graph.selected_node:
+                    colorcode = "red"
             draw_vertex(pos,
                         size=(DRAGGED_NODE_RADIUS if node == visual_graph.dragged_node else NODE_RADIUS),
-                        colorcode=("red" if node == visual_graph.selected_node else "black"))
+                        colorcode=colorcode)
+        
         if visual_graph.show_labels:
             for (v,d) in visual_graph.graph.nodes(True):
                 pos = visual_graph.coordinates[v].copy()
                 for label in visual_graph.vertex_labels:
-                    if d[label]!="":
+                    if label in d and d[label]!="":
                         pos[1] += 20
-                        label_string = label + ": " + d[label] if label != "" else d[label]
+                        label_string = label + ": " + str(d[label]) if label != "" else str(d[label])
                         draw_label(pos, label_string, colorcode=("red" if v == visual_graph.selected_node else "black"))
             for (v1, v2, d) in visual_graph.graph.edges(data=True):
                 pos1 = visual_graph.coordinates[v1]
@@ -59,7 +65,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
                 ]
     
                 for label in visual_graph.edge_labels:
-                    if d[label] != "":
+                    if label in d and d[label]!="":
                         label_string = label + ": " + d[label] if label != "" else d[label]
                         draw_label(pos, label_string, colorcode=("red" if (v1, v2) == visual_graph.selected_edge else "black"))
 
