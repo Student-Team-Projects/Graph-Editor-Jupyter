@@ -3,12 +3,18 @@ import pymunk
 
 from .settings import NODE_RADIUS
 from .visual_graph import VisualGraph
-
+from .fancy_drawing import get_tutte_embedding
+from enum import Enum
 VERTEX_BODY_MASS = 1
 VERTEX_BODY_MOMENT = 1
 WALLS_WIDTH = 10
 GRAVITY = (0, 0)
 
+class DrawingMode(Enum):
+    GRAVITY_ON = 0
+    GRAVITY_OFF = 1
+    TUTTE_NOT_DRAWN = 2
+    TUTTE_DRAWN = 3
 
 def create_border(space, bounds: (int, int)):
     width, height = bounds
@@ -114,8 +120,9 @@ class GraphPhysics:
     def move_node(self, node, pos: (int, int)):
         self.vertex_body[node].position = pos
 
-    def update_physics(self, dt, physics):
-        if physics:
+    def update_physics(self, dt, drawing_mode):
+        
+        if drawing_mode==DrawingMode.GRAVITY_ON:
             for node, body in self.vertex_body.items():
                 resistance = 7.0
                 velocity = body.velocity
@@ -126,8 +133,15 @@ class GraphPhysics:
             
             for node, body in self.vertex_body.items():
                 self.visual_graph.move_node(node, [body.position.x, body.position.y])
-        
-        self.normalize_positions()
+            self.normalize_positions()
+
+        elif drawing_mode==DrawingMode.TUTTE_NOT_DRAWN:
+            positions = get_tutte_embedding(self.visual_graph.graph)
+            for node in self.visual_graph.graph.nodes:
+                width, height = self.visual_graph.bounds
+                pos_x=(positions[node][0]+1)/2*width
+                pos_y=(positions[node][1]+1)/2*height
+                self.visual_graph.move_node(node, [pos_x, pos_y])
 
     def normalize_positions(self):
         for node, node_pos in self.visual_graph.coordinates.items():

@@ -7,21 +7,18 @@ from ipycanvas import Canvas
 from ipyevents import Event
 
 from . import graphics
-from .graph_physics import GraphPhysics
+from .graph_physics import GraphPhysics, DrawingMode
 from .settings import NODE_CLICK_RADIUS, EDGE_CLICK_RADIUS
 from .visual_graph import VisualGraph
 from functools import partial
 from enum import Enum
+from .fancy_drawing import is_tutte
 
 
 class Mode(Enum):
     STRUCTURE = 0
     PROPERTIES = 1
 
-class DrawingMode(Enum):
-    GRAVITY_OFF = False
-    GRAVITY_ON = True
-    FANCY = 2
 
 def mex(arr):
     result = 0
@@ -156,15 +153,18 @@ def edit(graph: nx.Graph):
     mode_box.physics_button.on_click(physics_select)
 
     def mode_select(button_widget):
-        nonlocal visual_graph, drawing_mode
+        nonlocal visual_graph, drawing_mode, graph, output_area
         button_widget.toggle()
-
+        print(is_tutte(graph))
         if button_widget.active:
-            # drawing_mode=DrawingMode.FANCY
-            with output_area:
-                    raise NotImplementedError("DrawingMode.FANCY is not yet implemented")
+            if is_tutte(graph):
+                drawing_mode=DrawingMode.TUTTE_NOT_DRAWN
+            else:        
+                with output_area:
+                    raise NotImplementedError("Cannot only use fancy drawing for 3-connected planar graphs")
         else:
             drawing_mode=DrawingMode.GRAVITY_ON
+            output_area.clear_output()
     mode_box.mode_button.on_click(mode_select)
 
     def add_label(button_widget, labels_info: widgets.VBox, visual_graph: VisualGraph, label_name: widgets.Textarea):
@@ -413,7 +413,9 @@ def edit(graph: nx.Graph):
         nonlocal CLOSE, drawing_mode
         try:
             while not CLOSE:
-                graph_physics.update_physics(1 / 60, drawing_mode.value)
+                graph_physics.update_physics(1 / 60, drawing_mode)
+                if drawing_mode==DrawingMode.TUTTE_NOT_DRAWN:
+                    drawing_mode=DrawingMode.TUTTE_DRAWN
                 graph_physics.normalize_positions()
                 graphics.draw_graph(canvas, visual_graph)
                 time.sleep(1 / 60)
