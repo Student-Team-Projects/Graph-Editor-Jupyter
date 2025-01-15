@@ -12,6 +12,7 @@ from .settings import NODE_CLICK_RADIUS, EDGE_CLICK_RADIUS
 from .visual_graph import VisualGraph
 from functools import partial
 from enum import Enum
+from typing import Dict
 
 
 class Mode(Enum):
@@ -29,7 +30,7 @@ def mex(arr):
         result += 1
     return result
 
-def edit(graph: nx.Graph):
+def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     """
     An interactive graph editor function designed for Jupyter.
 
@@ -82,7 +83,7 @@ def edit(graph: nx.Graph):
 
     >>> edit(G)
     """
-    visual_graph = VisualGraph(graph, (800, 500))
+    visual_graph = VisualGraph(graph, (800, 500), color_dict)
     CLOSE = False
     mode = Mode.STRUCTURE
     drawing_mode = DrawingMode.GRAVITY_ON

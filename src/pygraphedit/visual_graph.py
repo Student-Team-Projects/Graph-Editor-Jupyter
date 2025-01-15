@@ -2,12 +2,13 @@ import random
 
 import networkx as nx
 import numpy as np
+from typing import Dict
 
 from .subscribe import subscribable
 
 
 class VisualGraph:
-    def __init__(self, graph: nx.Graph, bounds: (int, int)):
+    def __init__(self, graph: nx.Graph, bounds: (int, int), color_dict: Dict[str, str]):
         self.graph = graph
         self.bounds = bounds
 
@@ -18,7 +19,7 @@ class VisualGraph:
         self.show_labels = True
         self.show_vertex_color = True
         
-        self.color_dict = {"0": "green", "2":"blue", "test": "#FF42FF"}
+        self.color_dict = color_dict
 
         self.coordinates = {
             node: [random.randint(0, bounds[0] - 1), random.randint(0, bounds[1] - 1)]
