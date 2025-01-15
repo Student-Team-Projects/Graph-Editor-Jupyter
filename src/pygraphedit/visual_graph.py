@@ -18,6 +18,7 @@ class VisualGraph:
         self.vertex_edit = True
         self.show_labels = True
         self.show_vertex_color = True
+        self.default_color_hashing = True
         
         self.color_dict = color_dict
 

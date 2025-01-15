@@ -17,8 +17,10 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
     def get_color(v):
         if v in visual_graph.color_dict:
             return visual_graph.color_dict[v]
-        else:
+        elif visual_graph.default_color_hashing:
             return int_to_color(v)
+        else:
+            return "black"
 
     def clear_canvas():
         canvas.clear()
