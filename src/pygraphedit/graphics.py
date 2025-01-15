@@ -64,7 +64,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
             for (v,d) in visual_graph.graph.nodes(True):
                 pos = visual_graph.coordinates[v].copy()
                 for label in visual_graph.vertex_labels:
-                    if label in d and d[label]!="":
+                    if label in d and d[label]!="" and not (visual_graph.show_vertex_color and label=='color'):
                         pos[1] += 20
                         label_string = label + ": " + str(d[label]) if label != "" else str(d[label])
                         draw_label(pos, label_string, colorcode=("red" if v == visual_graph.selected_node else "black"))
