@@ -10,11 +10,15 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
     
     def int_to_color(i):
         h = hash(str(i)) % (256**3)
-        h1 = h % 256
-        h2 = (h // 256) % 256
-        h3 = (h // (256**2)) % 256
-        out = '#' + hex(h1)[2:] + hex(h2)[2:] + hex(h3)[2:]
+        hs = f"{h:0{7}x}"
+        out = '#' + hs[0:6]
         return out
+    
+    def get_color(v):
+        if v in visual_graph.color_dict:
+            return visual_graph.color_dict[v]
+        else:
+            return int_to_color(v)
 
     def clear_canvas():
         canvas.clear()
@@ -47,7 +51,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
             colorcode = "black"
             if visual_graph.show_vertex_color:
                 if "color" in visual_graph.graph.nodes[node] and visual_graph.graph.nodes[node]["color"]!="":
-                    colorcode = int_to_color(visual_graph.graph.nodes[node]["color"])
+                    colorcode = get_color(visual_graph.graph.nodes[node]["color"])
             if node == visual_graph.selected_node:
                     colorcode = "red"
             draw_vertex(pos,

@@ -17,6 +17,8 @@ class VisualGraph:
         self.vertex_edit = True
         self.show_labels = True
         self.show_vertex_color = True
+        
+        self.color_dict = {"0": "green", "2":"blue", "test": "#FF42FF"}
 
         self.coordinates = {
             node: [random.randint(0, bounds[0] - 1), random.randint(0, bounds[1] - 1)]
