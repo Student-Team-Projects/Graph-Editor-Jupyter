@@ -6,6 +6,8 @@ to manipulate a graph by creating vertices, edges, and adding labels directly wi
 ### Parameters
 - **graph** (*networkx.Graph*): The graph object to be edited.
   It should be an instance of the NetworkX Graph class or a subclass.
+- **color_dict** (*Dict[str, str]*): Map of color labels into HTML colors,
+  empty by default.
 
 ### Functions of buttons (from left to right)
 1. Select if you want to edit graph structure.
