@@ -20,11 +20,6 @@ class Mode(Enum):
     STRUCTURE = 0
     PROPERTIES = 1
 
-class DrawingMode(Enum):
-    GRAVITY_OFF = False
-    GRAVITY_ON = True
-    FANCY = 2
-
 def mex(arr):
     result = 0
     while result in arr:
@@ -160,7 +155,6 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     def mode_select(button_widget):
         nonlocal visual_graph, drawing_mode, graph, output_area
         button_widget.toggle()
-        print(is_tutte(graph))
         if button_widget.active:
             if is_tutte(graph):
                 drawing_mode=DrawingMode.TUTTE_NOT_DRAWN
