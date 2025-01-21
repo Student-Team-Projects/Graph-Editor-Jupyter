@@ -7,12 +7,13 @@ from ipycanvas import Canvas
 from ipyevents import Event
 
 from . import graphics
-from .graph_physics import GraphPhysics
+from .graph_physics import GraphPhysics, DrawingMode
 from .settings import NODE_CLICK_RADIUS, EDGE_CLICK_RADIUS
 from .visual_graph import VisualGraph
 from functools import partial
 from enum import Enum
 from typing import Dict
+from .fancy_drawing import is_tutte
 
 
 class Mode(Enum):
@@ -93,7 +94,7 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     EPS = 10
     canvas = Canvas(width=800, height=500)
     mode_box = graphics.Menu()
-
+    output_area = widgets.Output()
     def close(button):
         nonlocal CLOSE, main_box
         CLOSE = True
@@ -155,6 +156,21 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
             drawing_mode=DrawingMode.GRAVITY_OFF
 
     mode_box.physics_button.on_click(physics_select)
+
+    def mode_select(button_widget):
+        nonlocal visual_graph, drawing_mode, graph, output_area
+        button_widget.toggle()
+        print(is_tutte(graph))
+        if button_widget.active:
+            if is_tutte(graph):
+                drawing_mode=DrawingMode.TUTTE_NOT_DRAWN
+            else:        
+                with output_area:
+                    raise NotImplementedError("Cannot only use fancy drawing for 3-connected planar graphs")
+        else:
+            drawing_mode=DrawingMode.GRAVITY_ON
+            output_area.clear_output()
+    mode_box.mode_button.on_click(mode_select)
 
     def add_label(button_widget, labels_info: widgets.VBox, visual_graph: VisualGraph, label_name: widgets.Textarea):
         new_label_name = str(label_name.value)
@@ -388,10 +404,12 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     Event(source=canvas, watched_events=['mouseup']).on_dom_event(perform_in_future(handle_mouseup))
     Event(source=canvas, watched_events=['dblclick']).on_dom_event(perform_in_future(handle_doubleclick))
 
-    main_box = widgets.HBox()
+    h_box = widgets.HBox()
     debug_text = widgets.Textarea()
 
-    main_box.children = ([widgets.VBox((mode_box, labels_info_scrollable)), canvas])
+    h_box.children = ([widgets.VBox((mode_box, labels_info_scrollable)), canvas])
+    main_box = widgets.VBox()
+    main_box.children = (h_box, output_area)
     display(main_box)
     update_labels(labels_info, visual_graph)
     graph_physics = GraphPhysics(visual_graph)
@@ -400,7 +418,9 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
         nonlocal CLOSE, drawing_mode
         try:
             while not CLOSE:
-                graph_physics.update_physics(1 / 60, drawing_mode.value)
+                graph_physics.update_physics(1 / 60, drawing_mode)
+                if drawing_mode==DrawingMode.TUTTE_NOT_DRAWN:
+                    drawing_mode=DrawingMode.TUTTE_DRAWN
                 graph_physics.normalize_positions()
                 graphics.draw_graph(canvas, visual_graph)
                 time.sleep(1 / 60)
