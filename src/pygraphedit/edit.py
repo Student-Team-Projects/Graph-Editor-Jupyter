@@ -37,7 +37,7 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     ----------
     - graph (networkx.Graph): The graph object to be edited. It should be an instance of the
       NetworkX Graph class or a subclass.
-    - color_dict (Dict[str, str]): A dictionary that maps color names to colors in hex.
+    - color_dict (Dict[str, str]): A dictionary that maps color names to HTML color names.
 
     Functions of buttons in order from left to right
     ------------------------------------------------
