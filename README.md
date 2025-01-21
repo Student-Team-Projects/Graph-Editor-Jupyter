@@ -8,7 +8,8 @@ to manipulate a graph by creating vertices, edges, and adding labels directly wi
   It should be an instance of the NetworkX Graph class or a subclass.
 
 ### Functions of buttons (from left to right)
-1-2: Select whether you want to edit graph structure (1) or labels (2).
+1. Select whether you want to edit graph structure.
+2. Select if you want to edit labels
 3. Select if you want for nodes to be clickable.
     Deselecting this should make easier to operate on edges in a large graph.
 4. Select if you want for edges to be clickable.
