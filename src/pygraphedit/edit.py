@@ -37,6 +37,7 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     ----------
     - graph (networkx.Graph): The graph object to be edited. It should be an instance of the
       NetworkX Graph class or a subclass.
+    - color_dict (Dict[str, str]): A dictionary that maps color names to colors in hex.
 
     Functions of buttons in order from left to right
     ------------------------------------------------
@@ -45,7 +46,10 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
        Deselecting this should make easier to operate on edges in a large graph.
     4. Select if you want for edges to be clickable.
        Deselecting this should make easier to operate on nodes in a large graph.
-    5. Close editing window.
+    5. Turn on/off physics.
+    6. Turn on/off fancy drawing.
+    7. Enable/disable labels.
+    8. Exit the editor.
 
     Mouse functions
     ---------------
@@ -63,6 +67,7 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     Notes
     -----
     This function relies on Jupyter ipywidgets, so it should work only in web versions of Jupyter.
+    (It is possible to run editor in VSCode but it is not guaranteed that it will work properly or even run at all)
 
     Examples
     --------

@@ -1,5 +1,5 @@
 from ipycanvas import Canvas, hold_canvas
-from .settings import DRAGGED_NODE_RADIUS, NODE_RADIUS
+from .settings import DRAGGED_NODE_RADIUS, NODE_RADIUS, FONT
 from .visual_graph import VisualGraph
 import ipywidgets as widgets
 import math
@@ -38,7 +38,7 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
 
     def draw_label(pos, label, colorcode="black"):
         canvas.fill_style = colorcode
-        canvas.font = "bold 16px Arial"
+        canvas.font = FONT
         canvas.text_align = "center"
         canvas.text_baseline = "middle"
         canvas.fill_text(label, pos[0], pos[1])
@@ -129,7 +129,7 @@ class Menu(widgets.HBox):
 
         self.children = ([widgets.HBox((self.struct_button, self.prop_button),
                                        layout=widgets.Layout(border='0.5px solid #000000')),
-                          self.vert_button, self.edge_button, self.physics_button, self.mode_button, self.close_button, self.labels_button])
+                          self.vert_button, self.edge_button, self.physics_button, self.mode_button, self.labels_button, self.close_button])
 
 
 def get_label_style():

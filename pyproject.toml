@@ -9,6 +9,10 @@ authors = [
   { name="Maksym Tur"},
   { name="Denis Logunov"},
   { name="Izabella Tylek"},
+  { name="Andrzej Kwaśniewski"},
+  { name="Augustyn Majtyka"},
+  { name="Roman Gicała"},
+  { name="Rafał Przypek"},
 ]
 description = "Graph editor for Jupyter"
 readme = "README.md"
