@@ -2,8 +2,8 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 [project]
-name = "pygraphedit"
-version = "0.0.5"
+name = "graph-editor-jupyter"
+version = "0.0.6"
 authors = [
   { name="Andrii Kovryhin"},
   { name="Maksym Tur"},
@@ -52,5 +52,5 @@ dependencies=[
 ]
 
 [project.urls]
-Homepage = "https://github.com/EndRay/graph-editor"
-Issues = "https://github.com/EndRay/graph-editor/issues"
+Homepage = "https://github.com/Student-Team-Projects/Graph-Editor-Jupyter"
+Issues = "https://github.com/Student-Team-Projects/Graph-Editor-Jupyter/issues"

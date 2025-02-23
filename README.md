@@ -37,19 +37,65 @@ This function relies on Jupyter ipywidgets, so it should work only in web versio
  (It is possible to run editor in VSCode but it is not guaranteed that it will work properly or even run at all.)
 
 ### Installation instructions
-go to: https://pypi.org/project/pygraphedit/ <br>
+go to: https://pypi.org/project/graph-editor-jupyter/ <br>
 or run:
-> pip install pygraphedit
+> pip install graph-editor-jupyter
 
 ### Examples
+
+#### Creating and editing a new graph
+
 ```python
 import networkx as nx
-from pygraphedit import edit
+from graph_editor_jupyter import edit
 
 # Create a sample graph
-G = nx.Graph()
-G.add_nodes_from([1, 2, 3])
-G.add_edges_from([(1, 2), (2, 3)])
+simple_graph = nx.Graph()
+simple_graph.add_node(1)
+simple_graph.add_node(2)
+simple_graph.add_edge(1, 2)
 
-# Call the interactive graph editor
-edit(G)
+# Open simple_graph in the editor
+edit(simple_graph)
+```
+#### Labels and graph coloring
+
+```python
+import networkx as nx
+from graph_editor_jupyter import edit
+
+labeled_graph = nx.Graph()
+
+# Add nodes with labels (labels can be also edited and added in the editor)
+labeled_graph.add_node(1, label_name='A')
+labeled_graph.add_node(2, label_name='B')
+labeled_graph.add_edge(1, 2)
+
+# Add nodes with colors, label with name 'color' (additional colors can be added in the editor)
+labeled_graph.add_node(3, color='c')
+labeled_graph.add_node(4, color='g')
+labeled_graph.add_edge(3, 4)
+
+# Define custom colors for labels (otherwise random colors are used)
+# label_colors={'color label': 'HTML color (Hex RGB or name)'}
+label_colors={'c' : '#00FFFF', 'g': 'green'} 
+
+# Open labeled_graph in the editor
+edit(labeled_graph, label_colors)
+```
+#### Displaying planar representation* of a graph
+##### **You can use fancy drawing for 3-connected planar graphs*
+
+```python
+import networkx as nx
+from graph_editor_jupyter import edit
+
+# Create a sample planar and 3-connected graph
+petersen_graph = nx.petersen_graph()
+
+# Open petersen_graph in the editor
+edit(petersen_graph)
+
+# To display planar representation of a graph, in the editor, 
+# change the drawing mode to 'fancy drawing' (6th button from the left) 
+```
