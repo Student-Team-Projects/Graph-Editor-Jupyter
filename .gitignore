@@ -2,4 +2,4 @@
 /.idea/
 __pycache__
 .ipynb_checkpoints
-pygraphedit.egg-info/
+graph_editor_jupyter.egg-info/

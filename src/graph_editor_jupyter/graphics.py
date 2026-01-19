@@ -62,7 +62,8 @@ def draw_graph(canvas: Canvas, visual_graph: VisualGraph):
         
         if visual_graph.show_labels:
             for (v,d) in visual_graph.graph.nodes(True):
-                pos = visual_graph.coordinates[v].copy()
+                # using list(), fixed bug with physics off
+                pos = list(visual_graph.coordinates[v])
                 for label in visual_graph.vertex_labels:
                     if label in d and d[label]!="" and not (visual_graph.show_vertex_color and label=='color'):
                         pos[1] += 20

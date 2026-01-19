@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Dict
 from .fancy_drawing import is_tutte
 
+_ACTIVE_EDITORS_CONTROLLERS = []
 
 class Mode(Enum):
     STRUCTURE = 0
@@ -25,6 +26,14 @@ def mex(arr):
     while result in arr:
         result += 1
     return result
+def stop_previous_editors():
+    """Zatrzymuje wszystkie wątki edytora z poprzednich uruchomień."""
+    global _ACTIVE_EDITORS_CONTROLLERS
+    
+    for controller in _ACTIVE_EDITORS_CONTROLLERS:
+        controller['stop'] = True
+   
+    _ACTIVE_EDITORS_CONTROLLERS = []
 
 def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     """
@@ -325,8 +334,13 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
             nonlocal is_drag
             if visual_graph.dragged_node is not None and distance > EPS:
                 is_drag = True
-                pos = (event['relativeX'], event['relativeY'])
+                pos = [event['relativeX'], event['relativeY']]
                 visual_graph.move_node(visual_graph.dragged_node, pos)
+                
+                # if physics off, persuade draw
+                #nonlocal drawing_mode
+                #if drawing_mode == DrawingMode.GRAVITY_OFF:
+                #    graphics.draw_graph(canvas, visual_graph)
 
     def handle_mouseup(event):
         nonlocal mode
@@ -337,7 +351,7 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
                 is_drag = False
                 return
 
-            pos = (event['relativeX'], event['relativeY'])
+            pos = [event['relativeX'], event['relativeY']]
             if mode_box.vert_button.active:
                 node, dist = visual_graph.get_closest_node(pos)
                 if dist < NODE_CLICK_RADIUS:
@@ -412,22 +426,49 @@ def edit(graph: nx.Graph, color_dict: Dict[str, str] = {}):
     display(main_box)
     update_labels(labels_info, visual_graph)
     graph_physics = GraphPhysics(visual_graph)
-
-    def main_loop(visual_graph, physics_button):
+    
+    stop_previous_editors()
+    current_thread_controller = {'stop': False}
+    _ACTIVE_EDITORS_CONTROLLERS.append(current_thread_controller)
+    
+    def main_loop(visual_graph, physics_button, controller):
         nonlocal CLOSE, drawing_mode
-        try:
-            while not CLOSE:
-                graph_physics.update_physics(1 / 60, drawing_mode)
-                if drawing_mode==DrawingMode.TUTTE_NOT_DRAWN:
-                    drawing_mode=DrawingMode.TUTTE_DRAWN
-                graph_physics.normalize_positions()
-                graphics.draw_graph(canvas, visual_graph)
-                time.sleep(1 / 60)
-                for (action, args, kwargs) in actions_to_perform:
-                    action(*args, **kwargs)
-                actions_to_perform.clear()
-        except Exception as e:
-            debug_text.value = repr(e)
+        
+        while not CLOSE and not controller['stop']:
+            try:
+                # actions first (Input/Update)
+                actions_performed = False
+                if actions_to_perform:
+                    actions_performed = True
+                    for (action, args, kwargs) in actions_to_perform:
+                        action(*args, **kwargs)
+                    actions_to_perform.clear()
 
-    thread = threading.Thread(target=main_loop, args=(visual_graph, mode_box.physics_button))
+                graph_physics.update_physics(1 / 60, drawing_mode)
+                
+                needs_redraw = actions_performed 
+                
+                if drawing_mode == DrawingMode.TUTTE_NOT_DRAWN:
+                    drawing_mode = DrawingMode.TUTTE_DRAWN
+                    needs_redraw = True 
+
+                if drawing_mode == DrawingMode.GRAVITY_ON:
+                    needs_redraw = True
+                    
+                graph_physics.normalize_positions()
+                
+                if needs_redraw:
+                    graphics.draw_graph(canvas, visual_graph)
+                
+                time.sleep(1 / 30)
+
+            except RuntimeError:
+                pass
+            except Exception as e:
+                debug_text.value = repr(e)
+
+    thread = threading.Thread(
+        target=main_loop, 
+        args=(visual_graph, mode_box.physics_button, current_thread_controller)
+    )
     thread.start()
