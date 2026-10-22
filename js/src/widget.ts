@@ -12,7 +12,7 @@ interface Model {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const NODE_RADIUS = 16;
-const PADDING = NODE_RADIUS + 4;
+const PADDING = 20; // must match PADDING in widget.py
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>): SVGElementTagNameMap[K] {
   const el = document.createElementNS(SVG_NS, tag);

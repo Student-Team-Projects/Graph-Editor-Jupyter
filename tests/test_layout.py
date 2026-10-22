@@ -1,7 +1,14 @@
 import networkx as nx
 import pytest
 
-from graph_editor_jupyter.layout import count_crossings, initial_layout, is_planar
+from graph_editor_jupyter.layout import (
+    clearance,
+    count_crossings,
+    initial_layout,
+    is_planar,
+    tree_layout,
+    tutte_layout,
+)
 
 NON_PLANAR = {
     "K5": nx.complete_graph(5),
@@ -49,6 +56,31 @@ def test_layout_is_normalized(name):
     assert set(pos) == set(graph.nodes)
     for x, y in pos.values():
         assert 0 <= x <= 1 and 0 <= y <= 1
+
+
+# Vertices are drawn with radius 16 px: below this gap they overlap or sit on edges.
+MIN_CLEARANCE = 30
+
+
+@pytest.mark.parametrize("name", [n for n, g in PLANAR.items() if g.number_of_nodes() >= 2])
+def test_planar_layout_has_no_overlaps(name):
+    graph = PLANAR[name]
+    assert clearance(graph, initial_layout(graph)) >= MIN_CLEARANCE
+
+
+@pytest.mark.parametrize("graph", [nx.complete_graph(4), nx.hypercube_graph(3), nx.wheel_graph(8), nx.dodecahedral_graph()])
+def test_tutte_layout_is_crossing_free_for_3_connected(graph):
+    assert count_crossings(graph, tutte_layout(graph)) == 0
+
+
+@pytest.mark.parametrize("graph", [nx.path_graph(9), nx.star_graph(6), nx.balanced_tree(3, 3), nx.random_labeled_tree(40, seed=3)])
+def test_tree_layout_is_crossing_free(graph):
+    assert count_crossings(graph, tree_layout(graph)) == 0
+
+
+def test_layout_is_deterministic():
+    graph = nx.petersen_graph()
+    assert initial_layout(graph) == initial_layout(graph)
 
 
 def test_count_crossings_square_with_diagonals():

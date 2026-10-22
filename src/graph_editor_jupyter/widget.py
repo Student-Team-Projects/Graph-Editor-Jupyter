@@ -7,6 +7,7 @@ import traitlets
 from .layout import initial_layout
 
 _STATIC = Path(__file__).parent / "static"
+PADDING = 20  # must match PADDING in js/src/widget.ts
 
 
 class GraphWidget(anywidget.AnyWidget):
@@ -27,7 +28,7 @@ class GraphWidget(anywidget.AnyWidget):
         self.graph = graph
         self._order = list(graph.nodes)
         index = {node: i for i, node in enumerate(self._order)}
-        pos = initial_layout(graph)
+        pos = initial_layout(graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
 
         self.nodes = [str(node) for node in self._order]
         self.edges = [[index[u], index[v]] for u, v in graph.edges]
