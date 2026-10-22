@@ -40,59 +40,14 @@
 }
 
 .graph-editor .ge-canvas {
-  display: block;
+  position: relative;
   max-width: 100%;
-  height: auto;
   background: var(--ge-bg);
   border: 1px solid var(--ge-border);
   border-radius: 4px;
-  touch-action: none;
-  user-select: none;
   outline: none;
 }
 
 .graph-editor .ge-canvas:focus-visible {
   border-color: var(--ge-accent);
-}
-
-.graph-editor .ge-edge-line {
-  stroke: var(--ge-ink);
-  stroke-width: 2;
-  pointer-events: none;
-}
-
-/* Wide invisible line so thin edges are easy to click. */
-.graph-editor .ge-edge-hit {
-  stroke: transparent;
-  stroke-width: 14;
-  cursor: pointer;
-}
-
-.graph-editor .ge-edge.ge-selected .ge-edge-line {
-  stroke: var(--ge-accent);
-  stroke-width: 3;
-}
-
-.graph-editor .ge-node {
-  cursor: grab;
-}
-
-.graph-editor .ge-node circle {
-  fill: var(--ge-bg);
-  stroke: var(--ge-ink);
-  stroke-width: 2;
-}
-
-.graph-editor .ge-node.ge-selected circle {
-  fill: var(--ge-accent-soft);
-  stroke: var(--ge-accent);
-  stroke-width: 3;
-}
-
-.graph-editor .ge-node text {
-  fill: var(--ge-ink);
-  font: 600 13px system-ui, sans-serif;
-  text-anchor: middle;
-  dominant-baseline: central;
-  pointer-events: none;
 }

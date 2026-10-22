@@ -6,7 +6,7 @@
     "build": "esbuild src/widget.ts --bundle --format=esm --minify --outdir=../src/graph_editor_jupyter/static",
     "dev": "esbuild src/widget.ts --bundle --format=esm --sourcemap=inline --outdir=../src/graph_editor_jupyter/static --watch",
     "typecheck": "tsc --noEmit",
-    "test": "esbuild src/forces.test.ts --bundle --platform=node --format=esm --outfile=.test/forces.test.mjs --log-level=warning && node --test .test/"
+    "test": "esbuild src/*.test.ts --bundle --platform=node --format=esm --outdir=.test --out-extension:.js=.mjs --log-level=warning && node --test .test/"
   },
   "devDependencies": {
     "@anywidget/types": "0.4.0",
@@ -16,6 +16,7 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
+    "cytoscape": "3.34.4",
     "d3-force": "3.0.0"
   }
 }

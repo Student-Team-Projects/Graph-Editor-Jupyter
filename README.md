@@ -17,7 +17,8 @@ Planar graphs are drawn without edge crossings; other graphs with as few crossin
 
 - **Click empty space**: add a vertex. **Click two vertices**: add an edge.
 - **Drag** a vertex to move it. **Double-click** (or select and press Delete) to remove.
-- **Force: off / on**: freeze the layout, or let physics push vertices apart.
+- **Force: off / on**: freeze the layout, or let physics push vertices apart (and off edges).
+- **− / + / Fit**: zoom. Drag empty space to pan.
 
 Every edit changes the NetworkX graph you passed in.
 

@@ -1,4 +1,6 @@
 import type { AnyModel, RenderProps } from "@anywidget/types";
+import cytoscape, { type Core, type EventObject, type NodeSingular } from "cytoscape";
+import { edgeId, idOfNode, nodeId, toElements, type ModelNode } from "./elements";
 import {
   captureRestState,
   createSimulation,
@@ -16,7 +18,7 @@ import "./widget.css";
 
 // Synced with GraphWidget traits in widget.py.
 interface Model {
-  nodes: { id: number; label: string }[];
+  nodes: ModelNode[];
   edges: [number, number][];
   positions: Record<string, [number, number]>;
   width: number;
@@ -25,32 +27,80 @@ interface Model {
 
 type Selection = { kind: "vertex"; id: number } | { kind: "edge"; u: number; v: number } | null;
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 const PADDING = 20; // must match PADDING in widget.py
-const DRAG_THRESHOLD = 4; // pixels before a press counts as a drag
-const DOUBLE_CLICK_MS = 250; // empty-space clicks wait this long so a double click doesn't add a vertex
+const LABEL_FONT = "600 13px system-ui, sans-serif";
+const ZOOM_STEP = 1.25;
 
 const HELP =
   "Click empty space: add vertex · Click two vertices: add edge · Drag: move · Double-click or Delete: remove";
 
-function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}): SVGElementTagNameMap[K] {
-  const el = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
-  return el;
+// Colors come from JupyterLab's theme variables, with plain fallbacks for other hosts.
+function themeColor(el: HTMLElement, name: string, fallback: string): string {
+  return getComputedStyle(el).getPropertyValue(name).trim() || fallback;
+}
+
+let measureContext: CanvasRenderingContext2D | null = null;
+function labelWidth(label: string): number {
+  measureContext ??= document.createElement("canvas").getContext("2d");
+  if (!measureContext) return label.length * 8;
+  measureContext.font = LABEL_FONT;
+  return measureContext.measureText(label).width;
+}
+
+function button(text: string, title: string): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.className = "ge-button";
+  b.textContent = text;
+  b.title = title;
+  return b;
+}
+
+// Colours come from JupyterLab's theme, read when called.
+function graphStyle(el: HTMLElement): cytoscape.StylesheetJson {
+  const ink = themeColor(el, "--jp-ui-font-color0", "#1a1a1a");
+  const paper = themeColor(el, "--jp-layout-color0", "#ffffff");
+  const accent = themeColor(el, "--jp-brand-color1", "#1976d2");
+  const accentSoft = themeColor(el, "--jp-brand-color3", "#bbdefb");
+  return [
+    {
+      selector: "node",
+      style: {
+        width: "data(size)",
+        height: "data(size)",
+        "background-color": paper,
+        "border-color": ink,
+        "border-width": 2,
+        label: "data(label)",
+        color: ink,
+        "font-family": "system-ui, sans-serif",
+        "font-size": 13,
+        "font-weight": 600,
+        "text-valign": "center",
+        "text-halign": "center",
+      },
+    },
+    {
+      selector: "edge",
+      style: { width: 2, "line-color": ink, "curve-style": "bezier" },
+    },
+    {
+      selector: "edge:loop",
+      style: { "loop-direction": "0deg", "loop-sweep": "45deg", "control-point-step-size": 40 },
+    },
+    { selector: "node.ge-selected", style: { "background-color": accentSoft, "border-color": accent, "border-width": 3 } },
+    { selector: "edge.ge-selected", style: { "line-color": accent, width: 3 } },
+  ];
 }
 
 class GraphEditor {
   private vertices = new Map<number, Vertex>();
   private links: Link[] = []; // edges between two different vertices
-  private loops: Vertex[] = []; // vertices with a self-loop
   private selection: Selection = null;
   private force = false;
   private readonly simulation: GraphSimulation;
-  private readonly root: SVGSVGElement;
-  private readonly edgeLayer = svg("g", { class: "ge-edges" });
-  private readonly nodeLayer = svg("g", { class: "ge-nodes" });
-  private readonly forceButton = document.createElement("button");
-  private pendingAdd: number | undefined;
+  private readonly cy: Core;
+  private readonly container = document.createElement("div");
+  private readonly forceButton = button("Force: off", "Turn physics on or off");
   private structureKey = "";
 
   constructor(private readonly model: AnyModel<Model>, el: HTMLElement, signal: AbortSignal) {
@@ -58,25 +108,50 @@ class GraphEditor {
 
     const toolbar = document.createElement("div");
     toolbar.className = "ge-toolbar";
-    this.forceButton.className = "ge-button";
-    this.forceButton.addEventListener("click", () => this.setForce(!this.force), { signal });
+    const zoomOut = button("−", "Zoom out");
+    const zoomIn = button("+", "Zoom in");
+    const fit = button("Fit", "Show the whole graph");
     const help = document.createElement("span");
     help.className = "ge-help";
     help.textContent = HELP;
-    toolbar.append(this.forceButton, help);
+    toolbar.append(this.forceButton, zoomOut, zoomIn, fit, help);
 
-    this.root = svg("svg", { class: "ge-canvas", tabindex: 0 });
-    this.root.append(this.edgeLayer, this.nodeLayer);
-    el.append(toolbar, this.root);
+    this.container.className = "ge-canvas";
+    this.container.tabIndex = 0;
+    el.append(toolbar, this.container);
+    this.sizeContainer();
+
+    this.cy = cytoscape({
+      container: this.container,
+      layout: { name: "preset" },
+      autounselectify: true, // selection is ours, so clicks behave the same everywhere
+      boxSelectionEnabled: false,
+      userZoomingEnabled: false, // the mouse wheel keeps scrolling the notebook; use the buttons
+      minZoom: 0.2,
+      maxZoom: 5,
+      style: graphStyle(el),
+    });
+    // The widget is created before Jupyter attaches it to the page: until then the canvas has
+    // no size and theme colours can't be read. Refresh both once it is visible.
+    const observer = new ResizeObserver(() => {
+      this.cy.resize();
+      this.cy.style(graphStyle(el));
+    });
+    observer.observe(this.container);
+    signal.addEventListener("abort", () => observer.disconnect());
+    signal.addEventListener("abort", () => this.cy.destroy());
 
     this.simulation = createSimulation()
       .on("tick", () => this.onTick())
       .on("end", () => this.sendPositions());
     signal.addEventListener("abort", () => this.simulation.stop());
 
-    this.root.addEventListener("pointerdown", (e) => this.onPointerDown(e), { signal });
-    this.root.addEventListener("dblclick", (e) => this.onDoubleClick(e), { signal });
-    this.root.addEventListener("keydown", (e) => this.onKeyDown(e), { signal });
+    this.forceButton.addEventListener("click", () => this.setForce(!this.force), { signal });
+    zoomIn.addEventListener("click", () => this.zoomBy(ZOOM_STEP), { signal });
+    zoomOut.addEventListener("click", () => this.zoomBy(1 / ZOOM_STEP), { signal });
+    fit.addEventListener("click", () => this.cy.fit(undefined, PADDING), { signal });
+    this.container.addEventListener("keydown", (e) => this.onKeyDown(e), { signal });
+    this.bindGraphEvents();
 
     const onModelChange = () => this.loadFromModel();
     for (const trait of ["nodes", "edges", "positions", "width", "height"]) {
@@ -97,6 +172,11 @@ class GraphEditor {
     return this.model.get("height");
   }
 
+  private sizeContainer(): void {
+    this.container.style.width = `${this.w}px`;
+    this.container.style.height = `${this.h}px`;
+  }
+
   private toScreen([x, y]: [number, number]): [number, number] {
     return [PADDING + x * (this.w - 2 * PADDING), PADDING + y * (this.h - 2 * PADDING)];
   }
@@ -105,16 +185,13 @@ class GraphEditor {
     return [(x - PADDING) / (this.w - 2 * PADDING), (y - PADDING) / (this.h - 2 * PADDING)];
   }
 
-  private pointer(e: MouseEvent): [number, number] {
-    const matrix = this.root.getScreenCTM();
-    if (!matrix) return [e.offsetX, e.offsetY];
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(matrix.inverse());
-    return [p.x, p.y];
-  }
-
   private clamp(v: Vertex): void {
     v.x = Math.min(Math.max(v.x ?? 0, v.r), this.w - v.r);
     v.y = Math.min(Math.max(v.y ?? 0, v.r), this.h - v.r);
+  }
+
+  private zoomBy(factor: number): void {
+    this.cy.zoom({ level: this.cy.zoom() * factor, renderedPosition: { x: this.w / 2, y: this.h / 2 } });
   }
 
   // ---- state from Python ----
@@ -123,34 +200,37 @@ class GraphEditor {
   // current position; Python's positions are used only for new ones.
   private loadFromModel(): void {
     const positions = this.model.get("positions");
-    const oldRest = new Map(this.links.map((l) => [this.linkKey(l.source.id, l.target.id), l.rest]));
+    const oldRest = new Map(this.links.map((l) => [edgeId(l.source.id, l.target.id), l.rest]));
     const next = new Map<number, Vertex>();
     for (const { id, label } of this.model.get("nodes")) {
       const old = this.vertices.get(id);
+      const r = radiusForLabel(labelWidth(label));
       if (old) {
         old.label = label;
+        old.r = r;
         next.set(id, old);
       } else {
         const [x, y] = this.toScreen(positions[String(id)] ?? [0.5, 0.5]);
-        next.set(id, { id, label, r: NODE_RADIUS, x, y, homeX: x, homeY: y });
+        next.set(id, { id, label, r, x, y, homeX: x, homeY: y });
       }
     }
     this.vertices = next;
+    for (const v of next.values()) this.clamp(v);
 
     const edges = this.model.get("edges").filter(([u, v]) => next.has(u) && next.has(v));
-    this.loops = edges.filter(([u, v]) => u === v).map(([u]) => next.get(u)!);
     this.links = edges
       .filter(([u, v]) => u !== v)
       .map(([u, v]) => {
         const source = next.get(u)!;
         const target = next.get(v)!;
-        return { source, target, rest: oldRest.get(this.linkKey(u, v)) ?? homeDistance(source, target) };
+        return { source, target, rest: oldRest.get(edgeId(u, v)) ?? homeDistance(source, target) };
       });
 
     if (this.selection?.kind === "vertex" && !next.has(this.selection.id)) this.selection = null;
-    if (this.selection?.kind === "edge" && !this.hasEdge(this.selection.u, this.selection.v)) this.selection = null;
+    const s = this.selection;
+    if (s?.kind === "edge" && !edges.some(([u, v]) => edgeId(u, v) === edgeId(s.u, s.v))) this.selection = null;
 
-    this.rebuild();
+    this.syncElements(edges);
     refreshForces(this.simulation, [...this.vertices.values()], this.links);
     // Only real structure changes restart physics; position updates we sent ourselves must not.
     const key = JSON.stringify([this.model.get("nodes"), this.model.get("edges")]);
@@ -158,8 +238,27 @@ class GraphEditor {
     this.structureKey = key;
   }
 
-  private linkKey(u: number, v: number): string {
-    return u < v ? `${u}-${v}` : `${v}-${u}`;
+  // Adds, updates and removes Cytoscape elements so they match the model, without
+  // recreating elements that still exist (a vertex being dragged must survive).
+  private syncElements(edges: [number, number][]): void {
+    const wanted = toElements(
+      [...this.vertices.values()].map(({ id, label }) => ({ id, label })),
+      edges,
+      (id) => ({ x: this.vertices.get(id)!.x ?? 0, y: this.vertices.get(id)!.y ?? 0 }),
+      (label) => radiusForLabel(labelWidth(label)),
+    );
+    const wantedIds = new Set(wanted.map((e) => e.data.id));
+    this.sizeContainer();
+    this.cy.batch(() => {
+      this.cy.elements().filter((e) => !wantedIds.has(e.id())).remove();
+      for (const def of wanted) {
+        const existing = this.cy.getElementById(def.data.id!);
+        if (existing.nonempty()) existing.data(def.data);
+        else this.cy.add(def);
+      }
+    });
+    this.cy.resize();
+    this.updatePositions();
   }
 
   private sendPositions(): void {
@@ -171,71 +270,19 @@ class GraphEditor {
 
   // ---- drawing ----
 
-  private rebuild(): void {
-    this.root.setAttribute("viewBox", `0 0 ${this.w} ${this.h}`);
-    this.root.setAttribute("width", String(this.w));
-    this.root.setAttribute("height", String(this.h));
-    this.edgeLayer.replaceChildren();
-    this.nodeLayer.replaceChildren();
-
-    const addEdge = (u: number, v: number, ...shapes: SVGElement[]) => {
-      const group = svg("g", { class: "ge-edge" });
-      group.dataset.u = String(u);
-      group.dataset.v = String(v);
-      group.append(...shapes);
-      this.edgeLayer.append(group);
-    };
-    for (const link of this.links) {
-      addEdge(link.source.id, link.target.id, svg("line", { class: "ge-edge-hit" }), svg("line", { class: "ge-edge-line" }));
-    }
-    for (const v of this.loops) {
-      addEdge(v.id, v.id, svg("circle", { class: "ge-edge-hit" }), svg("circle", { class: "ge-edge-line" }));
-    }
-
-    for (const v of this.vertices.values()) {
-      const group = svg("g", { class: "ge-node" });
-      group.dataset.id = String(v.id);
-      const circle = svg("circle");
-      const text = svg("text");
-      text.textContent = v.label;
-      group.append(circle, text);
-      this.nodeLayer.append(group);
-      // Grow the circle to fit long labels such as "(0, 1)". Measuring needs the text in the
-      // document; if it isn't rendered yet, estimate from the number of characters.
-      const width = text.getComputedTextLength() || v.label.length * 8;
-      v.r = radiusForLabel(width);
-      circle.setAttribute("r", String(v.r));
-    }
-    this.updatePositions();
-  }
-
   private updatePositions(): void {
-    const groups = this.edgeLayer.children;
-    this.links.forEach((link, i) => {
-      groups[i].classList.toggle("ge-selected", this.isSelectedEdge(link.source.id, link.target.id));
-      for (const line of groups[i].children) {
-        line.setAttribute("x1", String(link.source.x));
-        line.setAttribute("y1", String(link.source.y));
-        line.setAttribute("x2", String(link.target.x));
-        line.setAttribute("y2", String(link.target.y));
+    const s = this.selection;
+    this.cy.batch(() => {
+      for (const v of this.vertices.values()) {
+        const node = this.cy.getElementById(nodeId(v.id));
+        if (!node.grabbed()) node.position({ x: v.x ?? 0, y: v.y ?? 0 });
+        node.toggleClass("ge-selected", s?.kind === "vertex" && s.id === v.id);
       }
+      this.cy.edges().forEach((edge) => {
+        const selected = s?.kind === "edge" && edge.id() === edgeId(s.u, s.v);
+        edge.toggleClass("ge-selected", selected);
+      });
     });
-    this.loops.forEach((v, i) => {
-      const group = groups[this.links.length + i];
-      group.classList.toggle("ge-selected", this.isSelectedEdge(v.id, v.id));
-      for (const circle of group.children) {
-        // A small circle sitting on top of the vertex.
-        circle.setAttribute("cx", String(v.x));
-        circle.setAttribute("cy", String((v.y ?? 0) - v.r));
-        circle.setAttribute("r", String(v.r * 0.75));
-      }
-    });
-    let i = 0;
-    for (const v of this.vertices.values()) {
-      const group = this.nodeLayer.children[i++];
-      group.setAttribute("transform", `translate(${v.x},${v.y})`);
-      group.classList.toggle("ge-selected", this.selection?.kind === "vertex" && this.selection.id === v.id);
-    }
   }
 
   private onTick(): void {
@@ -263,92 +310,91 @@ class GraphEditor {
     }
   }
 
-  // ---- hit testing and selection ----
-
-  private vertexAt(target: EventTarget | null): Vertex | undefined {
-    const group = (target as Element | null)?.closest?.(".ge-node") as SVGGElement | null;
-    return group ? this.vertices.get(Number(group.dataset.id)) : undefined;
-  }
-
-  private edgeAt(target: EventTarget | null): [number, number] | undefined {
-    const group = (target as Element | null)?.closest?.(".ge-edge") as SVGGElement | null;
-    return group ? [Number(group.dataset.u), Number(group.dataset.v)] : undefined;
-  }
-
-  private hasEdge(u: number, v: number): boolean {
-    if (u === v) return this.loops.some((l) => l.id === u);
-    return this.links.some(
-      (l) => (l.source.id === u && l.target.id === v) || (l.source.id === v && l.target.id === u),
-    );
-  }
-
-  private isSelectedEdge(u: number, v: number): boolean {
-    const s = this.selection;
-    return s?.kind === "edge" && ((s.u === u && s.v === v) || (s.u === v && s.v === u));
-  }
+  // ---- selection ----
 
   private select(selection: Selection): void {
     this.selection = selection;
     this.updatePositions();
   }
 
+  private edgeEnds(e: EventObject): [number, number] {
+    const edge = e.target;
+    return [idOfNode(edge.source().id()), idOfNode(edge.target().id())];
+  }
+
+  private hasEdge(u: number, v: number): boolean {
+    return this.cy.getElementById(edgeId(u, v)).nonempty();
+  }
+
   // ---- input ----
 
-  private onPointerDown(e: PointerEvent): void {
-    if (e.button !== 0) return;
-    this.root.focus();
-    const vertex = this.vertexAt(e.target);
-    const edge = vertex ? undefined : this.edgeAt(e.target);
-    const [startX, startY] = this.pointer(e);
-    let dragging = false;
+  private bindGraphEvents(): void {
+    const cy = this.cy;
+    cy.on("tap", "node", (e) => {
+      this.container.focus();
+      this.clickVertex(idOfNode(e.target.id()));
+    });
+    cy.on("tap", "edge", (e) => {
+      this.container.focus();
+      const [u, v] = this.edgeEnds(e);
+      const s = this.selection;
+      const selected = s?.kind === "edge" && edgeId(s.u, s.v) === edgeId(u, v);
+      this.select(selected ? null : { kind: "edge", u, v });
+    });
+    // `onetap` fires only when the tap is not part of a double tap, so double-clicking
+    // empty space doesn't add a vertex.
+    cy.on("onetap", (e) => {
+      if (e.target !== cy) return;
+      this.container.focus();
+      if (this.selection) {
+        this.select(null);
+      } else {
+        const [x, y] = this.toModel(e.position.x, e.position.y);
+        this.model.send({ type: "add_node", x, y });
+      }
+    });
+    cy.on("dbltap", "node", (e) => {
+      this.model.send({ type: "remove_node", id: idOfNode(e.target.id()) });
+      this.select(null);
+    });
+    cy.on("dbltap", "edge", (e) => {
+      const [u, v] = this.edgeEnds(e);
+      this.model.send({ type: "remove_edge", u, v });
+      this.select(null);
+    });
 
-    const move = (ev: PointerEvent) => {
+    cy.on("grab", "node", () => {
+      if (this.force) this.simulation.alphaTarget(0.3).restart();
+    });
+    cy.on("drag", "node", (e) => {
+      const node: NodeSingular = e.target;
+      const vertex = this.vertices.get(idOfNode(node.id()));
       if (!vertex) return;
-      const [x, y] = this.pointer(ev);
-      if (!dragging && Math.hypot(x - startX, y - startY) < DRAG_THRESHOLD) return;
-      if (!dragging) {
-        dragging = true;
-        if (this.force) this.simulation.alphaTarget(0.3).restart();
-      }
+      const p = node.position();
+      vertex.x = p.x;
+      vertex.y = p.y;
+      this.clamp(vertex);
+      if (vertex.x !== p.x || vertex.y !== p.y) node.position({ x: vertex.x!, y: vertex.y! });
       if (this.force) {
-        vertex.fx = x;
-        vertex.fy = y;
-      } else {
-        vertex.x = x;
-        vertex.y = y;
-        this.clamp(vertex);
-        this.updatePositions();
+        // Pinned under the pointer; neighbours react through the simulation.
+        vertex.fx = vertex.x;
+        vertex.fy = vertex.y;
       }
-    };
-
-    const up = () => {
-      this.root.removeEventListener("pointermove", move);
-      this.root.removeEventListener("pointerup", up);
-      this.root.removeEventListener("pointercancel", up);
-      if (dragging && vertex) {
-        if (this.force) {
-          vertex.x = vertex.fx ?? vertex.x;
-          vertex.y = vertex.fy ?? vertex.y;
-          vertex.fx = null;
-          vertex.fy = null;
-          rehome(this.simulation, vertex, [...this.vertices.values()], this.links);
-          this.simulation.alphaTarget(0);
-        } else {
-          this.sendPositions();
-        }
-      } else if (vertex) {
-        this.clickVertex(vertex.id);
-      } else if (edge) {
-        this.select(this.isSelectedEdge(...edge) ? null : { kind: "edge", u: edge[0], v: edge[1] });
+    });
+    cy.on("free", "node", (e) => {
+      const vertex = this.vertices.get(idOfNode(e.target.id()));
+      if (!vertex) return;
+      if (this.force) {
+        // Released vertices rejoin the simulation with the drop spot as their new home;
+        // the vertices pushed aside spring back to theirs.
+        vertex.fx = null;
+        vertex.fy = null;
+        rehome(this.simulation, vertex, [...this.vertices.values()], this.links);
+        this.simulation.alphaTarget(0);
       } else {
-        this.clickEmpty(startX, startY);
+        this.sendPositions();
       }
-    };
-
-    this.root.setPointerCapture(e.pointerId);
-    this.root.addEventListener("pointermove", move);
-    this.root.addEventListener("pointerup", up);
-    this.root.addEventListener("pointercancel", up);
+    });
   }
 
   private clickVertex(id: number): void {
@@ -362,34 +408,6 @@ class GraphEditor {
     } else {
       this.select({ kind: "vertex", id });
     }
-  }
-
-  private clickEmpty(x: number, y: number): void {
-    if (this.selection) {
-      this.select(null);
-      return;
-    }
-    window.clearTimeout(this.pendingAdd);
-    this.pendingAdd = window.setTimeout(() => {
-      const [mx, my] = this.toModel(x, y);
-      this.model.send({ type: "add_node", x: mx, y: my });
-    }, DOUBLE_CLICK_MS);
-  }
-
-  private onDoubleClick(e: MouseEvent): void {
-    // With pointer capture, the event target can be the whole canvas, so look up what is under the cursor.
-    const root = this.root.getRootNode() as Document | ShadowRoot;
-    const target = root.elementFromPoint(e.clientX, e.clientY);
-    const vertex = this.vertexAt(target);
-    const edge = vertex ? undefined : this.edgeAt(target);
-    if (vertex) {
-      this.model.send({ type: "remove_node", id: vertex.id });
-    } else if (edge) {
-      this.model.send({ type: "remove_edge", u: edge[0], v: edge[1] });
-    } else {
-      window.clearTimeout(this.pendingAdd);
-    }
-    this.select(null);
   }
 
   private onKeyDown(e: KeyboardEvent): void {

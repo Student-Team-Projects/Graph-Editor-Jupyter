@@ -32,6 +32,8 @@ Today every frame is drawn in Python and sent to the browser (see [assessment](0
 
 ## Options for drawing the graph in the browser
 
+> **Update 2026-10-23:** drawing switched to **Cytoscape.js**, keeping d3-force for physics. Reason: labels, edge labels, colours, zoom and selection come ready-made. See [05-landscape-review.md](05-landscape-review.md).
+
 | Library | Latest | Fit for us |
 |---|---|---|
 | **d3-force** + our own SVG drawing | 3.0.0 (2021, stable and widely used) | Gives exactly the CS Academy behaviour: a force simulation you can start and stop (freeze), and `fx`/`fy` to pin a dragged vertex. We control the look completely. Small. **Recommended.** |
