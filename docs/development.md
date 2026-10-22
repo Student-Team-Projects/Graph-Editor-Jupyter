@@ -69,6 +69,8 @@ cd js && npm run build     # Node in WSL writes into src/.../static/
 
 ## Status
 
-Done: package skeleton, widget draws the graph, correct planarity check, crossing-free first layout for planar graphs (with tests).
+Done: package skeleton, widget draws the graph, correct planarity check, crossing-free first layout for planar graphs with vertices spread apart (with tests).
+
+**How the first layout is chosen** (`layout.py`): each connected component gets several candidate layouts (tidy tree layout for trees, Tutte embedding for 3-connected planar graphs, Kamada-Kawai, spring layout with several seeds, NetworkX planar layout). The one with the fewest crossings wins, ties broken by the most space between vertices. If the winner is crossing-free but cramped, a force step spreads it out, rejecting any move that would add a crossing.
 
 Not done yet: dragging, force/freeze mode, adding and removing vertices and edges, syncing edits back to the NetworkX graph, crossing minimization for non-planar graphs.
