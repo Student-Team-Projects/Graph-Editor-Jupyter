@@ -50,6 +50,13 @@ After rebuilding the front end, rerun the notebook cell. Restart the kernel afte
 
 **Hot reload (optional):** start Jupyter with the environment variable `ANYWIDGET_HMR=1` while `npm run dev` is running. The widget then updates in the notebook as you save TypeScript files.
 
+## Testing policy
+
+- **Every new feature or bug fix comes with tests** in `tests/`, in the same pull request.
+- A bug fix starts with a test that fails because of the bug, then the fix makes it pass.
+- Run `pytest` (and `npm run typecheck` for TypeScript changes) before every commit. Don't merge with failing tests.
+- Test logic in Python (layout, planarity, crossings, graph sync), where it is easy. UI behaviour in the browser is checked by hand in `main.ipynb`. Describe what you checked in the pull request.
+
 ## Our machine (WSL + Windows)
 
 The `.venv` on the team lead's machine is a Windows Python, while Node.js is installed in WSL. From a WSL terminal:

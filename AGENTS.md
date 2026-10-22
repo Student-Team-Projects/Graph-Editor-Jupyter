@@ -24,6 +24,7 @@ Read these files first, every session:
 ## Working style
 
 - Keep changes small and focused on one task.
-- Run the tests before saying a change works.
+- Every new feature or bug fix needs tests in `tests/`, in the same pull request (see the testing policy in `docs/development.md`).
+- Run `pytest` and, for TypeScript changes, `npm run typecheck` in `js/` before every commit. Never commit with failing tests.
 - If a decision is not covered by the docs, ask the user instead of guessing.
 - When the team decides something new, update the matching file in `docs/`.
