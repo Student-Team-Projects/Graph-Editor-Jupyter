@@ -15,6 +15,12 @@ edit(nx.dodecahedral_graph())
 
 Planar graphs are drawn without edge crossings.
 
+- **Click empty space**: add a vertex. **Click two vertices**: add an edge.
+- **Drag** a vertex to move it. **Double-click** (or select and press Delete) to remove.
+- **Force: off / on**: freeze the layout, or let physics push vertices apart.
+
+Every edit changes the NetworkX graph you passed in.
+
 ### Development
 
 See [docs/development.md](docs/development.md). Project requirements and decisions are in [docs/](docs/README.md).
