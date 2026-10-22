@@ -9,8 +9,9 @@ Read these files first, every session:
 1. `docs/README.md`: index of the docs
 2. `docs/requirements.md`: what we are building. Priorities come from here.
 3. `docs/git-policy.md`: how to use git. Follow it exactly.
-4. `docs/schedule.md`: deadlines
-5. `docs/research/`: background on the old code and the chosen tech stack
+4. `docs/development.md`: setup, repo layout, commands
+5. `docs/schedule.md`: deadlines
+6. `docs/research/`: background on the old code and the chosen tech stack
 
 ## Git rules (summary of docs/git-policy.md)
 

@@ -4,3 +4,7 @@ __pycache__
 .ipynb_checkpoints
 graph_editor_jupyter.egg-info/
 Untitled*.ipynb
+node_modules/
+src/graph_editor_jupyter/static/
+dist/
+.pytest_cache/

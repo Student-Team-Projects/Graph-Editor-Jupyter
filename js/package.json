@@ -1,0 +1,15 @@
+{
+  "name": "graph-editor-jupyter-widget",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/widget.ts --bundle --format=esm --minify --outdir=../src/graph_editor_jupyter/static",
+    "dev": "esbuild src/widget.ts --bundle --format=esm --sourcemap=inline --outdir=../src/graph_editor_jupyter/static --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@anywidget/types": "0.4.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

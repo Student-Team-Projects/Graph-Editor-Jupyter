@@ -5,6 +5,7 @@ Shared notes for the team (and for our AI assistants). Read these before startin
 | File | What it is |
 |---|---|
 | [requirements.md](requirements.md) | What the professor wants. The source of priorities. |
+| [development.md](development.md) | Setup, repo layout, everyday commands. |
 | [git-policy.md](git-policy.md) | Branches, commits, pull requests. Everyone follows it, AI included. |
 | [schedule.md](schedule.md) | Meeting dates and the final deadline (2027-01-21). |
 | [research/01-current-code-assessment.md](research/01-current-code-assessment.md) | Problems in the existing code, with evidence. |

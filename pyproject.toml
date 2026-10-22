@@ -1,9 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "graph-editor-jupyter"
-version = "0.0.6"
+version = "0.1.0.dev0"
 authors = [
   { name="Urszula Wójcik"},
   { name="Urszula Pilśniak"},
@@ -24,36 +25,25 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Framework :: Jupyter",
 ]
-dependencies=[
-    "matplotlib>=3.10.7",
-    "asttokens>=2.4.1",
-    "colorama>=0.4.6",
-    "comm>=0.2.0",
-    "decorator>=5.1.1",
-    "executing>=2.0.1",
-    "ipycanvas>=0.13.1",
-    "ipyevents>=2.0.2",
-    "ipython>=8.18.1",
-    "ipywidgets>=8.1.1",
-    "jedi>=0.19.1",
-    "jupyterlab-widgets>=3.0.9",
-    "matplotlib-inline>=0.1.6",
-    "networkx>=3.2.1",
-    "numpy>=1.26.2",
-    "parso>=0.8.3",
-    "Pillow>=11.0.0,<12.0.0",
-    "prompt-toolkit>=3.0.41",
-    "pure-eval>=0.2.2",
-    "Pygments>=2.17.2",
-    "six>=1.16.0",
-    "stack-data>=0.6.3",
-    "traitlets>=5.14.0",
-    "wcwidth>=0.2.12",
-    "widgetsnbextension>=4.0.9",
-    "pymunk>=6.6.0",
+dependencies = [
+    "anywidget>=0.11",
+    "networkx>=3.2",
+    "traitlets>=5.14",
 ]
+
+[project.optional-dependencies]
+dev = ["jupyterlab", "pytest"]
 
 [project.urls]
 Homepage = "https://github.com/Student-Team-Projects/Graph-Editor-Jupyter"
 Issues = "https://github.com/Student-Team-Projects/Graph-Editor-Jupyter/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/graph_editor_jupyter"]
+# Built by `npm run build` in js/; ignored by git but shipped in the package.
+artifacts = ["src/graph_editor_jupyter/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
