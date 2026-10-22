@@ -20,6 +20,10 @@ export const START_ALPHA = 0.3;
 const PERSONAL_SPACE = NODE_RADIUS * 5; // repulsion reaches only this far
 const HOME_PULL = 0.08;
 const LINK_STRENGTH = 0.3;
+// Vertex-edge repulsion (PrEd, Bertault 2000): a vertex closer than this to an edge it isn't
+// part of is pushed straight away from it, so it can't rest on top of the edge.
+const EDGE_CLEARANCE = NODE_RADIUS * 2.5;
+const EDGE_PUSH = 0.5;
 
 export interface Vertex extends SimulationNodeDatum {
   id: number;
@@ -35,12 +39,56 @@ export type Link = SimulationLinkDatum<Vertex> & { source: Vertex; target: Verte
 
 export type GraphSimulation = Simulation<Vertex, Link>;
 
+// A d3 force: each vertex is pushed away from nearby edges it doesn't belong to.
+export function forceVertexEdge(clearance = EDGE_CLEARANCE, strength = EDGE_PUSH) {
+  let vertices: Vertex[] = [];
+  let links: Link[] = [];
+  const force = (alpha: number) => {
+    for (const v of vertices) {
+      for (const { source: a, target: b } of links) {
+        if (a === v || b === v) continue;
+        const ex = b.x! - a.x!;
+        const ey = b.y! - a.y!;
+        const length2 = ex * ex + ey * ey;
+        if (length2 < 1e-9) continue;
+        const t = Math.max(0, Math.min(1, ((v.x! - a.x!) * ex + (v.y! - a.y!) * ey) / length2));
+        let dx = v.x! - (a.x! + t * ex);
+        let dy = v.y! - (a.y! + t * ey);
+        let d = Math.hypot(dx, dy);
+        if (d >= clearance) continue;
+        if (d < 1e-6) {
+          // Exactly on the edge: push along the edge's normal.
+          const length = Math.sqrt(length2);
+          dx = -ey / length;
+          dy = ex / length;
+          d = 1;
+        } else {
+          dx /= d;
+          dy /= d;
+        }
+        const push = (clearance - d) * strength * alpha;
+        v.vx = (v.vx ?? 0) + dx * push;
+        v.vy = (v.vy ?? 0) + dy * push;
+      }
+    }
+  };
+  force.initialize = (nodes: Vertex[]) => {
+    vertices = nodes;
+  };
+  force.links = (next: Link[]) => {
+    links = next;
+    return force;
+  };
+  return force;
+}
+
 export function createSimulation(): GraphSimulation {
   return forceSimulation<Vertex, Link>()
     .velocityDecay(0.5)
     .force("charge", forceManyBody<Vertex>().strength(-150).distanceMax(PERSONAL_SPACE))
     .force("link", forceLink<Vertex, Link>().distance((l) => l.rest).strength(LINK_STRENGTH))
     .force("collide", forceCollide<Vertex>((v) => v.r + NODE_RADIUS * 0.8))
+    .force("edges", forceVertexEdge())
     .force("homeX", forceX<Vertex>((v) => v.homeX).strength(HOME_PULL))
     .force("homeY", forceY<Vertex>((v) => v.homeY).strength(HOME_PULL))
     .stop();
@@ -62,6 +110,7 @@ export function homeDistance(a: Vertex, b: Vertex): number {
 export function refreshForces(sim: GraphSimulation, vertices: Vertex[], links: Link[]): void {
   sim.nodes(vertices);
   sim.force<ReturnType<typeof forceLink<Vertex, Link>>>("link")!.links(links);
+  sim.force<ReturnType<typeof forceVertexEdge>>("edges")!.links(links);
   sim.force<ReturnType<typeof forceCollide<Vertex>>>("collide")!.radius((v) => v.r + NODE_RADIUS * 0.8);
   sim.force<ReturnType<typeof forceX<Vertex>>>("homeX")!.x((v) => v.homeX);
   sim.force<ReturnType<typeof forceY<Vertex>>>("homeY")!.y((v) => v.homeY);

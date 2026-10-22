@@ -81,3 +81,21 @@ test("long labels get a bigger circle, short ones keep the default", () => {
   // "(0, 1)" in the 13px bold font is about 40px wide: it must fit inside the circle.
   assert.ok(radiusForLabel(40) * 2 > 40 + 8);
 });
+
+test("a vertex lying on an edge gets pushed off it", () => {
+  // Regression: vertex 4 dropped on edge 3-2 made three edges overlap (found by testing).
+  const v = (id: number, x: number, y: number): Vertex => ({ id, label: String(id), r: NODE_RADIUS, x, y, homeX: x, homeY: y });
+  const [a, b, c, on] = [v(3, 100, 250), v(2, 500, 250), v(5, 300, 100), v(4, 300, 250)];
+  const vertices = [a, b, c, on];
+  const links: Link[] = [
+    { source: a, target: b, rest: 0 },
+    { source: a, target: on, rest: 0 },
+    { source: on, target: b, rest: 0 },
+    { source: c, target: on, rest: 0 },
+  ];
+  const sim = settle(vertices, links);
+  sim.stop();
+  const t = Math.max(0, Math.min(1, (on.x! - a.x!) / (b.x! - a.x!)));
+  const gap = Math.hypot(on.x! - (a.x! + t * (b.x! - a.x!)), on.y! - (a.y! + t * (b.y! - a.y!)));
+  assert.ok(gap > NODE_RADIUS * 1.5, `vertex is only ${gap.toFixed(1)} px from the edge`);
+});
