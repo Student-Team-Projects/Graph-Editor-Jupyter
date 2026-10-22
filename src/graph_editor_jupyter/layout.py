@@ -1,4 +1,5 @@
-"""Initial vertex placement: crossing-free for planar graphs, with vertices spread apart.
+"""Initial vertex placement: crossing-free for planar graphs, few crossings for the rest,
+with vertices spread apart.
 
 Positions are returned normalized to [0, 1] x [0, 1]; the front end maps that square onto the
 drawing area (`size`). Quality is measured in pixels of that area. Layouts keep their proportions
@@ -21,6 +22,19 @@ MAX_EDGES_FOR_SEARCH = 400  # above this, skip the candidate search (crossing co
 MAX_NODES_FOR_ALL_CANDIDATES = 120  # above this, skip the slow Kamada-Kawai and extra spring seeds
 GOOD_CLEARANCE = 40  # pixels; layouts with at least this much space are not refined
 REFINE_SECONDS = 1.0  # time budget for refining one component
+
+# Crossing minimization for non-planar graphs (local search, see _reduce_crossings).
+SEARCH_SECONDS = 2.0  # time budget for one component
+SEARCH_GRID = (32, 20)  # candidate spots per axis when moving a vertex
+MIN_VERTEX_GAP = 36.0  # pixels kept between vertex centres (two radii plus a little)
+MIN_EDGE_GAP = 18.0  # pixels kept between a vertex and an edge it isn't part of
+# A near-miss (edge through or grazing a vertex, vertices on top of each other) reads worse
+# than a clean crossing, so it costs more. With equal cost, moving a vertex off an edge onto
+# an unavoidable crossing would never look like an improvement.
+NEAR_MISS_COST = 2
+SEARCH_STARTS = 3  # best candidate layouts the search starts from
+SHAKE_ROUNDS = 40  # stop after this many shakes in a row without improvement
+SHAKE_VERTICES = 3  # vertices moved to random spots in one shake
 
 
 def is_planar(graph: nx.Graph) -> bool:
@@ -232,6 +246,161 @@ def _refine(graph: nx.Graph, pos: dict, size: tuple[int, int]) -> dict:
     return _normalize(pos, size)
 
 
+def _planar_subgraph(graph: nx.Graph) -> nx.Graph:
+    """A large planar subgraph: a spanning forest (always planar), then every other edge
+    that keeps it planar. The first step of the planarization method."""
+    sub = nx.Graph()
+    sub.add_nodes_from(graph.nodes)
+    sub.add_edges_from(nx.minimum_spanning_edges(graph, data=False))
+    for u, v in graph.edges:
+        if u == v or sub.has_edge(u, v):
+            continue
+        sub.add_edge(u, v)
+        if not is_planar(sub):
+            sub.remove_edge(u, v)
+    return sub
+
+
+def _orient(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
+    return (b[..., 0] - a[..., 0]) * (c[..., 1] - a[..., 1]) - (b[..., 1] - a[..., 1]) * (c[..., 0] - a[..., 0])
+
+
+def _segment_distance(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Distance from points p to segments ab, broadcasting over leading axes."""
+    ab = b - a
+    length2 = np.maximum((ab**2).sum(-1), 1e-12)
+    t = np.clip(((p - a) * ab).sum(-1) / length2, 0.0, 1.0)
+    return np.linalg.norm(p - (a + t[..., None] * ab), axis=-1)
+
+
+def _violations(graph: nx.Graph, pos: dict, size: tuple[int, int]) -> int:
+    """Near-misses that look like crossings: vertices closer than MIN_VERTEX_GAP, and vertices
+    closer than MIN_EDGE_GAP to an edge they aren't part of (including lying exactly on it)."""
+    nodes = list(graph.nodes)
+    if len(nodes) < 2:
+        return 0
+    index = {v: i for i, v in enumerate(nodes)}
+    p = np.array([[pos[v][0] * size[0], pos[v][1] * size[1]] for v in nodes])
+    dist = np.linalg.norm(p[:, None] - p[None], axis=-1)
+    count = int((dist[np.triu_indices(len(nodes), 1)] < MIN_VERTEX_GAP).sum())
+    edges = np.array([[index[u], index[v]] for u, v in graph.edges if u != v])
+    if len(edges):
+        gaps = _segment_distance(p[:, None], p[edges[:, 0]][None], p[edges[:, 1]][None])
+        own = (edges[None, :, :] == np.arange(len(nodes))[:, None, None]).any(axis=2)
+        count += int(((gaps < MIN_EDGE_GAP) & ~own).sum())
+    return count
+
+
+def badness(graph: nx.Graph, pos: dict, size: tuple[int, int] = DEFAULT_SIZE) -> int:
+    """Crossings plus near-misses. A drawing where an edge passes through a vertex has no proper
+    crossing, but it reads like one, so it must not count as better."""
+    return count_crossings(graph, pos) + NEAR_MISS_COST * _violations(graph, pos, size)
+
+
+class _CrossingSearch:
+    """Local search for non-planar graphs: move one vertex at a time to the spot with the
+    lowest badness (crossings of its edges plus near-misses with other vertices and edges),
+    until no single move helps. Iterated: then shake a few vertices and search again,
+    keeping the result only if it is better."""
+
+    def __init__(self, graph: nx.Graph, size: tuple[int, int], seed: int):
+        self.graph = graph
+        self.size = size
+        self.nodes = list(graph.nodes)
+        self.index = {v: i for i, v in enumerate(self.nodes)}
+        self.edges = np.array([[self.index[u], self.index[v]] for u, v in graph.edges if u != v])
+        self.neighbours = [[self.index[w] for w in graph.neighbors(v) if w != v] for v in self.nodes]
+        self.grid = np.array(
+            [(x, y) for x in np.linspace(0, size[0], SEARCH_GRID[0]) for y in np.linspace(0, size[1], SEARCH_GRID[1])]
+        )
+        self.order = sorted(range(len(self.nodes)), key=lambda i: -len(self.neighbours[i]))
+        self.rng = np.random.default_rng(seed)
+
+    def to_pixels(self, pos: dict) -> np.ndarray:
+        return np.array([[pos[v][0] * self.size[0], pos[v][1] * self.size[1]] for v in self.nodes])
+
+    def to_pos(self, p: np.ndarray) -> dict:
+        return _normalize({v: (float(p[i][0]), float(p[i][1])) for v, i in self.index.items()}, self.size)
+
+    def score(self, p: np.ndarray) -> int:
+        pos = {v: (p[i][0] / self.size[0], p[i][1] / self.size[1]) for v, i in self.index.items()}
+        return badness(self.graph, pos, self.size)
+
+    def spot_scores(self, p: np.ndarray, i: int, spots: np.ndarray) -> np.ndarray:
+        """Badness of vertex i's edges and surroundings if i were at each spot."""
+        nbrs = self.neighbours[i]
+        edges = self.edges
+        w = p[nbrs]
+        a, b = p[edges[:, 0]], p[edges[:, 1]]
+
+        # Crossings between each moved edge (spot, w_j) and each other edge k.
+        touches = (edges[None, :, :] == np.array(nbrs)[:, None, None]).any(axis=2) | (edges == i).any(axis=1)[None, :]
+        s1 = spots[:, None, None, :]
+        s2 = w[None, :, None, :]
+        d1 = _orient(a[None, None], b[None, None], s1)
+        d2 = _orient(a[None, None], b[None, None], s2)
+        d3 = _orient(s1, s2, a[None, None])
+        d4 = _orient(s1, s2, b[None, None])
+        crossings = ((d1 * d2 < 0) & (d3 * d4 < 0) & ~touches[None]).sum(axis=(1, 2)).astype(float)
+
+        # Near-misses: the vertex too close to other vertices or to edges it isn't part of,
+        # and other vertices too close to its edges.
+        # These must be exactly the terms of badness() that change when i moves; skipping
+        # any of them lets the search go round in circles.
+        near = np.zeros(len(spots))
+        others = np.array([j for j in range(len(self.nodes)) if j != i], dtype=int)
+        if len(others):
+            near += (np.linalg.norm(spots[:, None] - p[others][None], axis=-1) < MIN_VERTEX_GAP).sum(axis=1)
+            # Every vertex except the edge's own endpoints counts, neighbours of i included.
+            gaps = _segment_distance(p[others][None, None], spots[:, None, None], w[None, :, None])
+            own_end = others[None, :] == np.array(nbrs)[:, None]  # (edge j, vertex) pairs to skip
+            near += ((gaps < MIN_EDGE_GAP) & ~own_end[None]).sum(axis=(1, 2))
+        not_mine = ~(edges == i).any(axis=1)
+        if not_mine.any():
+            gaps = _segment_distance(spots[:, None], a[not_mine][None], b[not_mine][None])
+            near += (gaps < MIN_EDGE_GAP).sum(axis=1)
+        return crossings + NEAR_MISS_COST * near
+
+    def improve(self, p: np.ndarray, deadline: float) -> None:
+        """Move single vertices while that lowers the badness. Changes p in place."""
+        improved = True
+        while improved and time.monotonic() < deadline:
+            improved = False
+            for i in self.order:
+                if time.monotonic() > deadline:
+                    break
+                nbrs = self.neighbours[i]
+                if not nbrs:
+                    continue
+                spots = np.vstack([p[i], p[nbrs].mean(axis=0), self.grid])  # spot 0 = stay
+                scores = self.spot_scores(p, i, spots)
+                best = int(np.argmin(scores))  # ties keep the earliest spot, i.e. staying put
+                if scores[best] < scores[0]:
+                    p[i] = spots[best]
+                    improved = True
+
+    def run(self, starts: list[dict], deadline: float) -> dict:
+        best_p, best_score = None, math.inf
+        for pos in starts:
+            p = self.to_pixels(pos)
+            self.improve(p, deadline)
+            score = self.score(p)
+            if score < best_score:
+                best_p, best_score = p, score
+        failures = 0
+        while best_score > 0 and failures < SHAKE_ROUNDS and time.monotonic() < deadline:
+            p = best_p.copy()
+            shaken = self.rng.choice(len(self.nodes), size=min(SHAKE_VERTICES, len(self.nodes)), replace=False)
+            p[shaken] = self.grid[self.rng.choice(len(self.grid), size=len(shaken))]
+            self.improve(p, deadline)
+            score = self.score(p)
+            if score < best_score:
+                best_p, best_score, failures = p, score, 0
+            else:
+                failures += 1
+        return self.to_pos(best_p)
+
+
 def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict:
     if graph.number_of_nodes() == 1:
         return {next(iter(graph.nodes)): (0.5, 0.5)}
@@ -239,13 +408,22 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
         pos = nx.planar_layout(graph) if is_planar(graph) else nx.spring_layout(graph, seed=seed)
         return _normalize({v: (float(x), float(y)) for v, (x, y) in pos.items()}, size)
 
-    # Fewest crossings first, then the most space between vertices.
+    candidates = _candidates(graph, seed, size)
+    if not is_planar(graph):
+        # Planarization: draw a large planar part without crossings, then add the rest.
+        candidates.append(_layout_component(_planar_subgraph(graph), seed, size))
+
+    # Fewest crossings and near-misses first, then the most space between vertices.
     scored = [
-        (-count_crossings(graph, pos), clearance(graph, pos, size), i, pos)
-        for i, pos in enumerate(_candidates(graph, seed, size))
+        (-badness(graph, pos, size), clearance(graph, pos, size), i, pos)
+        for i, pos in enumerate(candidates)
     ]
-    neg_crossings, space, _, best = max(scored, key=lambda item: item[:3])
-    if neg_crossings == 0 and space < GOOD_CLEARANCE:
+    scored.sort(key=lambda item: item[:3], reverse=True)
+    neg_badness, space, _, best = scored[0]
+    if not is_planar(graph) and neg_badness < 0:
+        starts = [pos for *_, pos in scored[:SEARCH_STARTS]]
+        best = _CrossingSearch(graph, size, seed).run(starts, time.monotonic() + SEARCH_SECONDS)
+    elif count_crossings(graph, best) == 0 and space < GOOD_CLEARANCE:
         refined = _refine(graph, best, size)
         if clearance(graph, refined, size) > space:
             best = refined
