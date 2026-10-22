@@ -9,8 +9,9 @@ Read these files first, every session:
 1. `docs/README.md`: index of the docs
 2. `docs/requirements.md`: what we are building. Priorities come from here.
 3. `docs/git-policy.md`: how to use git. Follow it exactly.
-4. `docs/schedule.md`: deadlines
-5. `docs/research/`: background on the old code and the chosen tech stack
+4. `docs/development.md`: setup, repo layout, commands
+5. `docs/schedule.md`: deadlines
+6. `docs/research/`: background on the old code and the chosen tech stack
 
 ## Git rules (summary of docs/git-policy.md)
 
@@ -23,6 +24,7 @@ Read these files first, every session:
 ## Working style
 
 - Keep changes small and focused on one task.
-- Run the tests before saying a change works.
+- Every new feature or bug fix needs tests in `tests/`, in the same pull request (see the testing policy in `docs/development.md`).
+- Run `pytest` and, for TypeScript changes, `npm run typecheck` in `js/` before every commit. Never commit with failing tests.
 - If a decision is not covered by the docs, ask the user instead of guessing.
 - When the team decides something new, update the matching file in `docs/`.

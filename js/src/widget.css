@@ -1,0 +1,34 @@
+/* JupyterLab theme variables with plain fallbacks for other hosts. */
+.graph-editor {
+  --ge-bg: var(--jp-layout-color0, #ffffff);
+  --ge-ink: var(--jp-ui-font-color0, #1a1a1a);
+  --ge-border: var(--jp-border-color1, #cccccc);
+}
+
+.graph-editor .ge-canvas {
+  display: block;
+  max-width: 100%;
+  background: var(--ge-bg);
+  border: 1px solid var(--ge-border);
+  border-radius: 4px;
+}
+
+.graph-editor .ge-edges line {
+  stroke: var(--ge-ink);
+  stroke-width: 2;
+}
+
+.graph-editor .ge-node circle {
+  fill: var(--ge-bg);
+  stroke: var(--ge-ink);
+  stroke-width: 2;
+}
+
+.graph-editor .ge-node text {
+  fill: var(--ge-ink);
+  font: 600 13px system-ui, sans-serif;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
