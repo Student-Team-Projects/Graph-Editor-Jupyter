@@ -33,7 +33,8 @@ Date: 2026-10-23. Purpose: copy the conventions users already know, so our edito
 ## Decided (2026-10-23)
 
 - **Frozen mode:** the dragged vertex follows the pointer, edges follow, nothing else moves. It stays where dropped.
-- **Force mode:** the dragged vertex is pinned to the pointer while dragging and the simulation is reheated, so neighbours react (the professor's "spring back" behaviour). **On release it rejoins the simulation** (d3 default, not sticky).
+- **Force mode is gentle** (changed after testing, 2026-10-23). A full force re-layout scrambled crossing-free drawings (dodecahedron: 0 → 10 crossings, vertices jumping 270 px). Now, when force turns on, every edge keeps its current length as its natural length, every vertex keeps its current spot as home, vertices only push each other when closer than about 80 px, and a weak pull returns them home. Measured on the dodecahedron: 0 crossings after, vertices move at most 18 px.
+- **Dragging in force mode:** the dragged vertex is pinned to the pointer and nearby vertices get pushed aside. **On release it rejoins the simulation with the drop spot as its new home**, and the pushed vertices spring back to theirs.
 - **New edge:** click one vertex, then another (not drag from vertex to vertex), so dragging always means moving.
 - Switching modes never resets the layout.
 

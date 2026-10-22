@@ -73,7 +73,7 @@ Done: package skeleton, widget draws the graph, correct planarity check, crossin
 
 **How the first layout is chosen** (`layout.py`): each connected component gets several candidate layouts (tidy tree layout for trees, Tutte embedding for 3-connected planar graphs, Kamada-Kawai, spring layout with several seeds, NetworkX planar layout). The one with the fewest crossings wins, ties broken by the most space between vertices. If the winner is crossing-free but cramped, a force step spreads it out, rejecting any move that would add a crossing.
 
-Done: dragging, force/freeze toggle (d3-force, starts frozen so the first layout stays as computed), adding and removing vertices and edges, edits go straight into the NetworkX graph.
+Done: dragging, force/freeze toggle (d3-force, starts frozen so the first layout stays as computed; force mode is gentle, see research/03), adding and removing vertices and edges, edits go straight into the NetworkX graph.
 
 Not done yet: crossing minimization for non-planar graphs, editing labels/attributes.
 

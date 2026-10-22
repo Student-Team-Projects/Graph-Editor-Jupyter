@@ -4,6 +4,8 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
+  forceX,
+  forceY,
   type Simulation,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
@@ -22,9 +24,13 @@ interface Model {
 interface Vertex extends SimulationNodeDatum {
   id: number;
   label: string;
+  // Where the vertex springs back to in force mode.
+  homeX: number;
+  homeY: number;
 }
 
-type Link = SimulationLinkDatum<Vertex> & { source: Vertex; target: Vertex };
+// `rest` is the edge's natural length in force mode.
+type Link = SimulationLinkDatum<Vertex> & { source: Vertex; target: Vertex; rest: number };
 
 type Selection = { kind: "vertex"; id: number } | { kind: "edge"; u: number; v: number } | null;
 
@@ -33,6 +39,13 @@ const NODE_RADIUS = 16;
 const PADDING = 20; // must match PADDING in widget.py
 const DRAG_THRESHOLD = 4; // pixels before a press counts as a drag
 const DOUBLE_CLICK_MS = 250; // empty-space clicks wait this long so a double click doesn't add a vertex
+
+// Force mode is gentle: edges keep their length, vertices only push each other when close,
+// and a weak pull returns everything home (docs/research/03-existing-editors.md).
+const PERSONAL_SPACE = NODE_RADIUS * 5; // repulsion reaches only this far
+const HOME_PULL = 0.08;
+const LINK_STRENGTH = 0.3;
+const START_ALPHA = 0.3;
 
 const HELP =
   "Click empty space: add vertex · Click two vertices: add edge · Drag: move · Double-click or Delete: remove";
@@ -73,9 +86,12 @@ class GraphEditor {
     el.append(toolbar, this.root);
 
     this.simulation = forceSimulation<Vertex, Link>()
-      .force("charge", forceManyBody<Vertex>().strength(-250))
-      .force("link", forceLink<Vertex, Link>().distance(90))
-      .force("collide", forceCollide<Vertex>(NODE_RADIUS * 1.6))
+      .velocityDecay(0.5)
+      .force("charge", forceManyBody<Vertex>().strength(-150).distanceMax(PERSONAL_SPACE))
+      .force("link", forceLink<Vertex, Link>().distance((l) => l.rest).strength(LINK_STRENGTH))
+      .force("collide", forceCollide<Vertex>(NODE_RADIUS * 1.8))
+      .force("homeX", forceX<Vertex>((v) => v.homeX).strength(HOME_PULL))
+      .force("homeY", forceY<Vertex>((v) => v.homeY).strength(HOME_PULL))
       .on("tick", () => this.onTick())
       .on("end", () => this.sendPositions())
       .stop();
@@ -130,6 +146,7 @@ class GraphEditor {
   // current position; Python's positions are used only for new ones.
   private loadFromModel(): void {
     const positions = this.model.get("positions");
+    const oldRest = new Map(this.links.map((l) => [this.linkKey(l.source.id, l.target.id), l.rest]));
     const next = new Map<number, Vertex>();
     for (const { id, label } of this.model.get("nodes")) {
       const old = this.vertices.get(id);
@@ -138,25 +155,58 @@ class GraphEditor {
         next.set(id, old);
       } else {
         const [x, y] = this.toScreen(positions[String(id)] ?? [0.5, 0.5]);
-        next.set(id, { id, label, x, y });
+        next.set(id, { id, label, x, y, homeX: x, homeY: y });
       }
     }
     this.vertices = next;
     this.links = this.model
       .get("edges")
       .filter(([u, v]) => next.has(u) && next.has(v))
-      .map(([u, v]) => ({ source: next.get(u)!, target: next.get(v)! }));
+      .map(([u, v]) => {
+        const source = next.get(u)!;
+        const target = next.get(v)!;
+        return { source, target, rest: oldRest.get(this.linkKey(u, v)) ?? this.homeDistance(source, target) };
+      });
 
     if (this.selection?.kind === "vertex" && !next.has(this.selection.id)) this.selection = null;
     if (this.selection?.kind === "edge" && !this.findLink(this.selection.u, this.selection.v)) this.selection = null;
 
     this.simulation.nodes([...this.vertices.values()]);
-    this.simulation.force<ReturnType<typeof forceLink<Vertex, Link>>>("link")!.links(this.links);
+    this.linkForce().links(this.links);
     // Only real structure changes restart physics; position updates we sent ourselves must not.
     const key = JSON.stringify([this.model.get("nodes"), this.model.get("edges")]);
-    if (this.force && key !== this.structureKey) this.simulation.alpha(0.5).restart();
+    if (this.force && key !== this.structureKey) this.simulation.alpha(START_ALPHA).restart();
     this.structureKey = key;
     this.rebuild();
+  }
+
+  private linkKey(u: number, v: number): string {
+    return u < v ? `${u}-${v}` : `${v}-${u}`;
+  }
+
+  private linkForce() {
+    return this.simulation.force<ReturnType<typeof forceLink<Vertex, Link>>>("link")!;
+  }
+
+  private homeDistance(a: Vertex, b: Vertex): number {
+    return Math.max(Math.hypot(a.homeX - b.homeX, a.homeY - b.homeY), NODE_RADIUS * 3);
+  }
+
+  // Current positions become home, and current edge lengths become natural lengths.
+  private captureRestState(): void {
+    for (const v of this.vertices.values()) {
+      v.homeX = v.x ?? 0;
+      v.homeY = v.y ?? 0;
+    }
+    for (const l of this.links) l.rest = this.homeDistance(l.source, l.target);
+    this.refreshForces();
+  }
+
+  // d3 caches accessor results; re-run them after homes or rest lengths change.
+  private refreshForces(): void {
+    this.linkForce().links(this.links);
+    this.simulation.force<ReturnType<typeof forceX<Vertex>>>("homeX")!.x((v) => v.homeX);
+    this.simulation.force<ReturnType<typeof forceY<Vertex>>>("homeY")!.y((v) => v.homeY);
   }
 
   private sendPositions(): void {
@@ -225,7 +275,8 @@ class GraphEditor {
     this.forceButton.textContent = on ? "Force: on" : "Force: off";
     this.forceButton.setAttribute("aria-pressed", String(on));
     if (on) {
-      this.simulation.alpha(0.5).restart();
+      this.captureRestState();
+      this.simulation.alpha(START_ALPHA).restart();
     } else {
       // Freezing keeps every vertex exactly where it is now.
       this.simulation.stop();
@@ -300,9 +351,16 @@ class GraphEditor {
       this.root.removeEventListener("pointercancel", up);
       if (dragging && vertex) {
         if (this.force) {
-          // Released vertices rejoin the simulation (docs/research/03-existing-editors.md).
+          // Released vertices rejoin the simulation with their new spot as home;
+          // the vertices pushed aside spring back to theirs.
+          vertex.homeX = vertex.fx ?? vertex.x ?? 0;
+          vertex.homeY = vertex.fy ?? vertex.y ?? 0;
           vertex.fx = null;
           vertex.fy = null;
+          for (const l of this.links) {
+            if (l.source === vertex || l.target === vertex) l.rest = this.homeDistance(l.source, l.target);
+          }
+          this.refreshForces();
           this.simulation.alphaTarget(0);
         } else {
           this.sendPositions();
