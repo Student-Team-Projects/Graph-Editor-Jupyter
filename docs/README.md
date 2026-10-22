@@ -12,6 +12,7 @@ Shared notes for the team (and for our AI assistants). Read these before startin
 | [research/02-tech-stack.md](research/02-tech-stack.md) | Which languages and libraries to use, and why. |
 | [research/03-existing-editors.md](research/03-existing-editors.md) | How other graph editors behave (dragging, force mode). |
 | [research/04-crossing-minimization.md](research/04-crossing-minimization.md) | How non-planar graphs get few crossings and still look good, with sources. |
+| [research/05-landscape-review.md](research/05-landscape-review.md) | Build or adopt: existing widgets and libraries for every part of the project. |
 
 ## Using these docs with an AI assistant
 
