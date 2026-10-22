@@ -159,3 +159,18 @@ def test_local_scores_match_the_global_score(graph):
             moved = p.copy()
             moved[i] = spots[k]
             assert local[k] - local[0] == search.score(moved) - search.score(p)
+
+
+@pytest.mark.parametrize("graph", [nx.complete_graph(5), nx.petersen_graph(), nx.random_regular_graph(3, 12, seed=2)])
+def test_local_energy_matches_the_global_energy(graph):
+    # Same guard for the second phase: spot_energy must change exactly like energy().
+    rng = np.random.default_rng(1)
+    search = _CrossingSearch(graph, DEFAULT_SIZE, seed=0)
+    p = rng.uniform(0, 1, (len(search.nodes), 2)) * DEFAULT_SIZE
+    for i in range(len(search.nodes)):
+        spots = np.vstack([p[i], rng.uniform(0, 1, (10, 2)) * DEFAULT_SIZE])
+        local = search.spot_energy(p, i, spots)
+        for k in range(1, len(spots)):
+            moved = p.copy()
+            moved[i] = spots[k]
+            assert local[k] - local[0] == pytest.approx(search.energy(moved) - search.energy(p), rel=1e-6, abs=1e-6)

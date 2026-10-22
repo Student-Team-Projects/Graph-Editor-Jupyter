@@ -24,17 +24,21 @@ GOOD_CLEARANCE = 40  # pixels; layouts with at least this much space are not ref
 REFINE_SECONDS = 1.0  # time budget for refining one component
 
 # Crossing minimization for non-planar graphs (local search, see _reduce_crossings).
-SEARCH_SECONDS = 2.0  # time budget for one component
+SEARCH_SECONDS = 1.6  # time budget for the crossing phase of one component
+POLISH_SECONDS = 0.8  # time budget for the stress phase
 SEARCH_GRID = (32, 20)  # candidate spots per axis when moving a vertex
 MIN_VERTEX_GAP = 36.0  # pixels kept between vertex centres (two radii plus a little)
 MIN_EDGE_GAP = 18.0  # pixels kept between a vertex and an edge it isn't part of
-# A near-miss (edge through or grazing a vertex, vertices on top of each other) reads worse
-# than a clean crossing, so it costs more. With equal cost, moving a vertex off an edge onto
-# an unavoidable crossing would never look like an improvement.
-NEAR_MISS_COST = 2
+# A near-miss (edge through or grazing a vertex, vertices on top of each other) is ambiguous:
+# you can't tell if the edge ends at the vertex. It can also hide several crossings, so it
+# must cost far more than one crossing, or the search trades real crossings for hidden ones.
+NEAR_MISS_COST = 10
 SEARCH_STARTS = 3  # best candidate layouts the search starts from
 SHAKE_ROUNDS = 40  # stop after this many shakes in a row without improvement
-SHAKE_VERTICES = 3  # vertices moved to random spots in one shake
+SHAKE_VERTICES = 4  # vertices moved to random spots in one shake (3 missed Heawood's optimum)
+ENERGY_MARGIN = 1e-3  # smallest energy gain that counts as an improvement
+CLEARANCE_GOAL = 40.0  # pixels; closer than this, a vertex is pushed away from an edge (Davidson-Harel)
+RELAX_STEPS = 200  # stress majorization passes in the polish phase
 
 
 def is_planar(graph: nx.Graph) -> bool:
@@ -315,6 +319,17 @@ class _CrossingSearch:
         )
         self.order = sorted(range(len(self.nodes)), key=lambda i: -len(self.neighbours[i]))
         self.rng = np.random.default_rng(seed)
+        # Stress (Kamada-Kawai, Gansner et al.): every pair of vertices should be as far apart
+        # as their graph distance times a unit length, weighted by 1 / distance^2. The unit is
+        # chosen so the longest shortest path fits the shorter side of the drawing area.
+        lengths = dict(nx.all_pairs_shortest_path_length(graph))
+        n = len(self.nodes)
+        hops = np.array([[lengths[u].get(v, n) for v in self.nodes] for u in self.nodes], dtype=float)
+        unit = min(size) / max(1.0, hops.max())
+        self.unit = unit
+        self.target = hops * unit
+        with np.errstate(divide="ignore"):
+            self.weight = np.where(hops > 0, 1.0 / np.maximum(hops, 1e-12) ** 2, 0.0)
 
     def to_pixels(self, pos: dict) -> np.ndarray:
         return np.array([[pos[v][0] * self.size[0], pos[v][1] * self.size[1]] for v in self.nodes])
@@ -322,12 +337,52 @@ class _CrossingSearch:
     def to_pos(self, p: np.ndarray) -> dict:
         return _normalize({v: (float(p[i][0]), float(p[i][1])) for v, i in self.index.items()}, self.size)
 
+    def energy(self, p: np.ndarray) -> float:
+        """How good the drawing looks, second priority after badness: stress (how well it shows
+        the graph's distances) plus a vertex-edge term from Davidson-Harel that grows as a
+        vertex gets close to an edge it isn't part of. Stress alone happily presses vertices
+        against edges when crossings are fixed."""
+        dist = np.linalg.norm(p[:, None] - p[None], axis=-1)
+        stress = (self.weight * (dist - self.target) ** 2)[np.triu_indices(len(p), 1)].sum() / self.unit**2
+        if not len(self.edges):
+            return float(stress)
+        gaps = _segment_distance(p[:, None], p[self.edges[:, 0]][None], p[self.edges[:, 1]][None])
+        own = (self.edges[None, :, :] == np.arange(len(p))[:, None, None]).any(axis=2)
+        crowding = ((CLEARANCE_GOAL / np.maximum(gaps, 1.0)) ** 2)[~own].sum()
+        return float(stress + crowding)
+
+    def spot_energy(self, p: np.ndarray, i: int, spots: np.ndarray) -> np.ndarray:
+        """The terms of energy() that involve vertex i, if it were at each spot."""
+        dist = np.linalg.norm(spots[:, None] - p[None], axis=-1)  # (spots, all vertices)
+        result = (self.weight[i][None] * (dist - self.target[i][None]) ** 2).sum(axis=1) / self.unit**2
+        if not len(self.edges):
+            return result
+        # Vertex i near edges it isn't part of.
+        not_mine = ~(self.edges == i).any(axis=1)
+        if not_mine.any():
+            a, b = p[self.edges[not_mine, 0]], p[self.edges[not_mine, 1]]
+            gaps = _segment_distance(spots[:, None], a[None], b[None])
+            result += ((CLEARANCE_GOAL / np.maximum(gaps, 1.0)) ** 2).sum(axis=1)
+        # Other vertices near i's edges (except each edge's own far endpoint).
+        nbrs = self.neighbours[i]
+        if nbrs:
+            others = np.array([j for j in range(len(self.nodes)) if j != i], dtype=int)
+            gaps = _segment_distance(p[others][None, None], spots[:, None, None], p[nbrs][None, :, None])
+            own_end = others[None, :] == np.array(nbrs)[:, None]
+            result += (((CLEARANCE_GOAL / np.maximum(gaps, 1.0)) ** 2) * ~own_end[None]).sum(axis=(1, 2))
+        return result
+
     def score(self, p: np.ndarray) -> int:
         pos = {v: (p[i][0] / self.size[0], p[i][1] / self.size[1]) for v, i in self.index.items()}
         return badness(self.graph, pos, self.size)
 
     def spot_scores(self, p: np.ndarray, i: int, spots: np.ndarray) -> np.ndarray:
         """Badness of vertex i's edges and surroundings if i were at each spot."""
+        crossings, near = self.spot_terms(p, i, spots)
+        return crossings + NEAR_MISS_COST * near
+
+    def spot_terms(self, p: np.ndarray, i: int, spots: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Crossings and near-misses involving vertex i if it were at each spot."""
         nbrs = self.neighbours[i]
         edges = self.edges
         w = p[nbrs]
@@ -359,10 +414,11 @@ class _CrossingSearch:
         if not_mine.any():
             gaps = _segment_distance(spots[:, None], a[not_mine][None], b[not_mine][None])
             near += (gaps < MIN_EDGE_GAP).sum(axis=1)
-        return crossings + NEAR_MISS_COST * near
+        return crossings, near
 
-    def improve(self, p: np.ndarray, deadline: float) -> None:
-        """Move single vertices while that lowers the badness. Changes p in place."""
+    def improve(self, p: np.ndarray, deadline: float, polish: bool = False) -> None:
+        """Move single vertices while that lowers the badness. With polish, also move between
+        spots of equal badness when that lowers the stress. Changes p in place."""
         improved = True
         while improved and time.monotonic() < deadline:
             improved = False
@@ -374,12 +430,53 @@ class _CrossingSearch:
                     continue
                 spots = np.vstack([p[i], p[nbrs].mean(axis=0), self.grid])  # spot 0 = stay
                 scores = self.spot_scores(p, i, spots)
-                best = int(np.argmin(scores))  # ties keep the earliest spot, i.e. staying put
-                if scores[best] < scores[0]:
+                if polish:
+                    # Never worse on badness; among equally good spots, the lowest stress. The
+                    # stress must drop by a margin, so the loop ends.
+                    energy = self.spot_energy(p, i, spots)
+                    tied = np.flatnonzero(scores == scores[0])
+                    best = int(tied[np.argmin(energy[tied])])
+                    better = scores.min() < scores[0] or energy[best] < energy[0] - ENERGY_MARGIN
+                    if scores.min() < scores[0]:
+                        best = int(np.argmin(scores))
+                else:
+                    best = int(np.argmin(scores))  # ties keep the earliest spot, i.e. staying put
+                    better = scores[best] < scores[0]
+                if better:
                     p[i] = spots[best]
                     improved = True
 
-    def run(self, starts: list[dict], deadline: float) -> dict:
+    def relax(self, p: np.ndarray, deadline: float) -> None:
+        """Polish without losing ground: stress majorization (Gansner et al.), one vertex at a
+        time, keeping a move only if it adds neither crossings nor near-misses. Without this,
+        any drawing with the minimum crossings counts as equally good. Changes p in place."""
+        for _ in range(RELAX_STEPS):
+            if time.monotonic() > deadline:
+                break
+            moved = False
+            for i in self.order:
+                diff = p[i] - p
+                dist = np.maximum(np.linalg.norm(diff, axis=1), 1e-6)
+                w = self.weight[i]
+                # Each other vertex j "votes" for the spot at the target distance from it,
+                # in the current direction; the weighted average is the new position.
+                votes = p + (self.target[i] / dist)[:, None] * diff
+                target = np.clip((w[:, None] * votes).sum(axis=0) / w.sum(), 0, self.size)
+                if np.linalg.norm(target - p[i]) < 0.5:
+                    continue
+                spots = np.vstack([p[i], target])
+                crossings, near = self.spot_terms(p, i, spots)
+                if crossings[1] <= crossings[0] and near[1] <= near[0]:
+                    stress = self.spot_energy(p, i, spots)
+                    if stress[1] < stress[0]:
+                        p[i] = target
+                        moved = True
+            if not moved:
+                break
+
+    def run(self, starts: list[dict], deadline: float, polish_seconds: float) -> dict:
+        """Phase 1 minimizes badness (crossings, near-misses) with iterated local search.
+        Phase 2 lowers the stress without letting badness grow."""
         best_p, best_score = None, math.inf
         for pos in starts:
             p = self.to_pixels(pos)
@@ -398,8 +495,11 @@ class _CrossingSearch:
                 best_p, best_score, failures = p, score, 0
             else:
                 failures += 1
-        return self.to_pos(best_p)
 
+        polish_deadline = time.monotonic() + polish_seconds
+        self.improve(best_p, polish_deadline, polish=True)
+        self.relax(best_p, polish_deadline)
+        return self.to_pos(best_p)
 
 def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict:
     if graph.number_of_nodes() == 1:
@@ -422,7 +522,7 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
     neg_badness, space, _, best = scored[0]
     if not is_planar(graph) and neg_badness < 0:
         starts = [pos for *_, pos in scored[:SEARCH_STARTS]]
-        best = _CrossingSearch(graph, size, seed).run(starts, time.monotonic() + SEARCH_SECONDS)
+        best = _CrossingSearch(graph, size, seed).run(starts, time.monotonic() + SEARCH_SECONDS, POLISH_SECONDS)
     elif count_crossings(graph, best) == 0 and space < GOOD_CLEARANCE:
         refined = _refine(graph, best, size)
         if clearance(graph, refined, size) > space:
