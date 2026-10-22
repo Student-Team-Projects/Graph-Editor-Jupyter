@@ -64,7 +64,7 @@ Issue found by testing: a vertex can be dropped onto an edge (vertex 4 on edge 3
 | Editing gestures | Keep our click-click and double-click behaviour, implemented on Cytoscape events |
 | Attribute editing | Side panel in the widget |
 
-**Open:** the team decides whether to switch the drawing part to Cytoscape.js.
+**Decided (2026-10-23):** switch the drawing part to Cytoscape.js, and add PrEd-style vertex-edge repulsion to force mode.
 
 ## Sources
 
