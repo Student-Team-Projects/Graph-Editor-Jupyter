@@ -78,6 +78,15 @@ def test_tree_layout_is_crossing_free(graph):
     assert count_crossings(graph, tree_layout(graph)) == 0
 
 
+def test_layout_keeps_proportions():
+    # A cycle is drawn as a regular polygon; stretching would turn it into an ellipse.
+    pos = initial_layout(nx.cycle_graph(12))
+    xs = [x * 760 for x, _ in pos.values()]
+    ys = [y * 460 for _, y in pos.values()]
+    width, height = max(xs) - min(xs), max(ys) - min(ys)
+    assert abs(width - height) / max(width, height) < 0.05
+
+
 def test_layout_is_deterministic():
     graph = nx.petersen_graph()
     assert initial_layout(graph) == initial_layout(graph)

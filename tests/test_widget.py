@@ -1,4 +1,5 @@
 import networkx as nx
+import pytest
 
 from graph_editor_jupyter import GraphWidget
 from graph_editor_jupyter.widget import _STATIC
@@ -86,6 +87,43 @@ def test_unknown_message_is_ignored():
     widget = GraphWidget(graph)
     send(widget, type="something_else")
     assert list(graph.edges) == [(0, 1)]
+
+
+def test_repeated_or_stale_messages_are_ignored():
+    graph = nx.path_graph(3)
+    widget = GraphWidget(graph)
+    i = ids(widget)
+    send(widget, type="remove_node", id=i["0"])
+    send(widget, type="remove_node", id=i["0"])
+    send(widget, type="add_edge", u=i["0"], v=i["2"])
+    send(widget, type="remove_edge", u=i["0"], v=i["1"])
+    assert set(graph.nodes) == {1, 2}
+    assert list(graph.edges) == [(1, 2)]
+
+
+def test_python_side_changes_are_picked_up():
+    graph = nx.path_graph(3)
+    widget = GraphWidget(graph)
+    i = ids(widget)
+    graph.remove_node(2)
+    graph.add_node("new")
+    send(widget, type="add_edge", u=i["2"], v=i["0"])  # vertex 2 is gone: ignored
+    assert 2 not in graph
+    assert "new" in ids(widget)
+    assert "2" not in ids(widget)
+    assert str(ids(widget)["new"]) in widget.positions
+
+
+@pytest.mark.parametrize("graph", [nx.DiGraph([(0, 1)]), nx.MultiGraph([(0, 1), (0, 1)])])
+def test_unsupported_graph_types_get_a_clear_error(graph):
+    with pytest.raises(TypeError, match="undirected simple graphs"):
+        GraphWidget(graph)
+
+
+def test_self_loops_are_sent():
+    widget = GraphWidget(nx.Graph([(0, 0), (0, 1)]))
+    i = ids(widget)
+    assert [i["0"], i["0"]] in widget.edges
 
 
 def test_front_end_bundle_exists():

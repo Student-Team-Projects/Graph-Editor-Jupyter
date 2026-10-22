@@ -27,6 +27,11 @@ class GraphWidget(anywidget.AnyWidget):
     height = traitlets.Int(500).tag(sync=True)
 
     def __init__(self, graph: nx.Graph, **kwargs):
+        if graph.is_directed() or graph.is_multigraph():
+            raise TypeError(
+                "edit() supports undirected simple graphs (nx.Graph) for now; "
+                f"got {type(graph).__name__}. Try nx.Graph(graph) to convert."
+            )
         super().__init__(**kwargs)
         self.graph = graph
         self._node_of: dict[int, object] = {}
@@ -51,6 +56,25 @@ class GraphWidget(anywidget.AnyWidget):
         self.nodes = [{"id": self._id_of[n], "label": str(n)} for n in self.graph.nodes]
         self.edges = [[self._id_of[u], self._id_of[v]] for u, v in self.graph.edges]
 
+    def _sync_from_graph(self) -> None:
+        """Catch up with changes made to the graph in Python after the widget was shown."""
+        for node_id, node in list(self._node_of.items()):
+            if node not in self.graph:
+                del self._node_of[node_id]
+                del self._id_of[node]
+        missing = [n for n in self.graph.nodes if n not in self._id_of]
+        if missing:
+            positions = dict(self.positions)
+            for k, node in enumerate(missing):
+                # No layout for them yet: put them in a row along the top edge.
+                positions[str(self._register(node))] = [(k + 1) / (len(missing) + 1), 0.0]
+            self.positions = positions
+
+    def _node(self, node_id):
+        """The NetworkX node for a front-end id, or None if it no longer exists."""
+        node = self._node_of.get(node_id)
+        return node if node is not None and node in self.graph else None
+
     def _new_node(self):
         """Smallest non-negative integer that is not a node yet."""
         n = 0
@@ -59,6 +83,9 @@ class GraphWidget(anywidget.AnyWidget):
         return n
 
     def _on_msg(self, _widget, content: dict, _buffers) -> None:
+        # Messages can be stale (a double click racing a delete, or the graph changed in
+        # Python meanwhile), so unknown vertices are ignored instead of raising.
+        self._sync_from_graph()
         kind = content.get("type")
         if kind == "add_node":
             node = self._new_node()
@@ -66,18 +93,17 @@ class GraphWidget(anywidget.AnyWidget):
             node_id = self._register(node)
             self.positions = {**self.positions, str(node_id): [content["x"], content["y"]]}
         elif kind == "add_edge":
-            u, v = self._node_of[content["u"]], self._node_of[content["v"]]
-            if u != v:
+            u, v = self._node(content.get("u")), self._node(content.get("v"))
+            if u is not None and v is not None and u != v:
                 self.graph.add_edge(u, v)
         elif kind == "remove_node":
-            node = self._node_of.pop(content["id"])
-            del self._id_of[node]
-            self.graph.remove_node(node)
-            self.positions = {k: p for k, p in self.positions.items() if k != str(content["id"])}
+            node = self._node(content.get("id"))
+            if node is not None:
+                self.graph.remove_node(node)
+                self._sync_from_graph()
+                self.positions = {k: p for k, p in self.positions.items() if k != str(content["id"])}
         elif kind == "remove_edge":
-            u, v = self._node_of[content["u"]], self._node_of[content["v"]]
-            if self.graph.has_edge(u, v):
+            u, v = self._node(content.get("u")), self._node(content.get("v"))
+            if u is not None and v is not None and self.graph.has_edge(u, v):
                 self.graph.remove_edge(u, v)
-        else:
-            return
         self._sync_structure()

@@ -1,15 +1,17 @@
 import type { AnyModel, RenderProps } from "@anywidget/types";
 import {
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-  forceX,
-  forceY,
-  type Simulation,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
-} from "d3-force";
+  captureRestState,
+  createSimulation,
+  homeDistance,
+  NODE_RADIUS,
+  radiusForLabel,
+  refreshForces,
+  rehome,
+  START_ALPHA,
+  type GraphSimulation,
+  type Link,
+  type Vertex,
+} from "./forces";
 import "./widget.css";
 
 // Synced with GraphWidget traits in widget.py.
@@ -21,31 +23,12 @@ interface Model {
   height: number;
 }
 
-interface Vertex extends SimulationNodeDatum {
-  id: number;
-  label: string;
-  // Where the vertex springs back to in force mode.
-  homeX: number;
-  homeY: number;
-}
-
-// `rest` is the edge's natural length in force mode.
-type Link = SimulationLinkDatum<Vertex> & { source: Vertex; target: Vertex; rest: number };
-
 type Selection = { kind: "vertex"; id: number } | { kind: "edge"; u: number; v: number } | null;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const NODE_RADIUS = 16;
 const PADDING = 20; // must match PADDING in widget.py
 const DRAG_THRESHOLD = 4; // pixels before a press counts as a drag
 const DOUBLE_CLICK_MS = 250; // empty-space clicks wait this long so a double click doesn't add a vertex
-
-// Force mode is gentle: edges keep their length, vertices only push each other when close,
-// and a weak pull returns everything home (docs/research/03-existing-editors.md).
-const PERSONAL_SPACE = NODE_RADIUS * 5; // repulsion reaches only this far
-const HOME_PULL = 0.08;
-const LINK_STRENGTH = 0.3;
-const START_ALPHA = 0.3;
 
 const HELP =
   "Click empty space: add vertex · Click two vertices: add edge · Drag: move · Double-click or Delete: remove";
@@ -58,10 +41,11 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string,
 
 class GraphEditor {
   private vertices = new Map<number, Vertex>();
-  private links: Link[] = [];
+  private links: Link[] = []; // edges between two different vertices
+  private loops: Vertex[] = []; // vertices with a self-loop
   private selection: Selection = null;
   private force = false;
-  private readonly simulation: Simulation<Vertex, Link>;
+  private readonly simulation: GraphSimulation;
   private readonly root: SVGSVGElement;
   private readonly edgeLayer = svg("g", { class: "ge-edges" });
   private readonly nodeLayer = svg("g", { class: "ge-nodes" });
@@ -85,26 +69,19 @@ class GraphEditor {
     this.root.append(this.edgeLayer, this.nodeLayer);
     el.append(toolbar, this.root);
 
-    this.simulation = forceSimulation<Vertex, Link>()
-      .velocityDecay(0.5)
-      .force("charge", forceManyBody<Vertex>().strength(-150).distanceMax(PERSONAL_SPACE))
-      .force("link", forceLink<Vertex, Link>().distance((l) => l.rest).strength(LINK_STRENGTH))
-      .force("collide", forceCollide<Vertex>(NODE_RADIUS * 1.8))
-      .force("homeX", forceX<Vertex>((v) => v.homeX).strength(HOME_PULL))
-      .force("homeY", forceY<Vertex>((v) => v.homeY).strength(HOME_PULL))
+    this.simulation = createSimulation()
       .on("tick", () => this.onTick())
-      .on("end", () => this.sendPositions())
-      .stop();
+      .on("end", () => this.sendPositions());
     signal.addEventListener("abort", () => this.simulation.stop());
 
     this.root.addEventListener("pointerdown", (e) => this.onPointerDown(e), { signal });
     this.root.addEventListener("dblclick", (e) => this.onDoubleClick(e), { signal });
     this.root.addEventListener("keydown", (e) => this.onKeyDown(e), { signal });
 
-    const onStructure = () => this.loadFromModel();
+    const onModelChange = () => this.loadFromModel();
     for (const trait of ["nodes", "edges", "positions", "width", "height"]) {
-      model.on(`change:${trait}`, onStructure);
-      signal.addEventListener("abort", () => model.off(`change:${trait}`, onStructure));
+      model.on(`change:${trait}`, onModelChange);
+      signal.addEventListener("abort", () => model.off(`change:${trait}`, onModelChange));
     }
     this.loadFromModel();
     this.setForce(false);
@@ -136,8 +113,8 @@ class GraphEditor {
   }
 
   private clamp(v: Vertex): void {
-    v.x = Math.min(Math.max(v.x ?? 0, NODE_RADIUS), this.w - NODE_RADIUS);
-    v.y = Math.min(Math.max(v.y ?? 0, NODE_RADIUS), this.h - NODE_RADIUS);
+    v.x = Math.min(Math.max(v.x ?? 0, v.r), this.w - v.r);
+    v.y = Math.min(Math.max(v.y ?? 0, v.r), this.h - v.r);
   }
 
   // ---- state from Python ----
@@ -155,58 +132,34 @@ class GraphEditor {
         next.set(id, old);
       } else {
         const [x, y] = this.toScreen(positions[String(id)] ?? [0.5, 0.5]);
-        next.set(id, { id, label, x, y, homeX: x, homeY: y });
+        next.set(id, { id, label, r: NODE_RADIUS, x, y, homeX: x, homeY: y });
       }
     }
     this.vertices = next;
-    this.links = this.model
-      .get("edges")
-      .filter(([u, v]) => next.has(u) && next.has(v))
+
+    const edges = this.model.get("edges").filter(([u, v]) => next.has(u) && next.has(v));
+    this.loops = edges.filter(([u, v]) => u === v).map(([u]) => next.get(u)!);
+    this.links = edges
+      .filter(([u, v]) => u !== v)
       .map(([u, v]) => {
         const source = next.get(u)!;
         const target = next.get(v)!;
-        return { source, target, rest: oldRest.get(this.linkKey(u, v)) ?? this.homeDistance(source, target) };
+        return { source, target, rest: oldRest.get(this.linkKey(u, v)) ?? homeDistance(source, target) };
       });
 
     if (this.selection?.kind === "vertex" && !next.has(this.selection.id)) this.selection = null;
-    if (this.selection?.kind === "edge" && !this.findLink(this.selection.u, this.selection.v)) this.selection = null;
+    if (this.selection?.kind === "edge" && !this.hasEdge(this.selection.u, this.selection.v)) this.selection = null;
 
-    this.simulation.nodes([...this.vertices.values()]);
-    this.linkForce().links(this.links);
+    this.rebuild();
+    refreshForces(this.simulation, [...this.vertices.values()], this.links);
     // Only real structure changes restart physics; position updates we sent ourselves must not.
     const key = JSON.stringify([this.model.get("nodes"), this.model.get("edges")]);
     if (this.force && key !== this.structureKey) this.simulation.alpha(START_ALPHA).restart();
     this.structureKey = key;
-    this.rebuild();
   }
 
   private linkKey(u: number, v: number): string {
     return u < v ? `${u}-${v}` : `${v}-${u}`;
-  }
-
-  private linkForce() {
-    return this.simulation.force<ReturnType<typeof forceLink<Vertex, Link>>>("link")!;
-  }
-
-  private homeDistance(a: Vertex, b: Vertex): number {
-    return Math.max(Math.hypot(a.homeX - b.homeX, a.homeY - b.homeY), NODE_RADIUS * 3);
-  }
-
-  // Current positions become home, and current edge lengths become natural lengths.
-  private captureRestState(): void {
-    for (const v of this.vertices.values()) {
-      v.homeX = v.x ?? 0;
-      v.homeY = v.y ?? 0;
-    }
-    for (const l of this.links) l.rest = this.homeDistance(l.source, l.target);
-    this.refreshForces();
-  }
-
-  // d3 caches accessor results; re-run them after homes or rest lengths change.
-  private refreshForces(): void {
-    this.linkForce().links(this.links);
-    this.simulation.force<ReturnType<typeof forceX<Vertex>>>("homeX")!.x((v) => v.homeX);
-    this.simulation.force<ReturnType<typeof forceY<Vertex>>>("homeY")!.y((v) => v.homeY);
   }
 
   private sendPositions(): void {
@@ -225,34 +178,56 @@ class GraphEditor {
     this.edgeLayer.replaceChildren();
     this.nodeLayer.replaceChildren();
 
-    for (const link of this.links) {
+    const addEdge = (u: number, v: number, ...shapes: SVGElement[]) => {
       const group = svg("g", { class: "ge-edge" });
-      group.dataset.u = String(link.source.id);
-      group.dataset.v = String(link.target.id);
-      group.append(svg("line", { class: "ge-edge-hit" }), svg("line", { class: "ge-edge-line" }));
+      group.dataset.u = String(u);
+      group.dataset.v = String(v);
+      group.append(...shapes);
       this.edgeLayer.append(group);
+    };
+    for (const link of this.links) {
+      addEdge(link.source.id, link.target.id, svg("line", { class: "ge-edge-hit" }), svg("line", { class: "ge-edge-line" }));
     }
+    for (const v of this.loops) {
+      addEdge(v.id, v.id, svg("circle", { class: "ge-edge-hit" }), svg("circle", { class: "ge-edge-line" }));
+    }
+
     for (const v of this.vertices.values()) {
       const group = svg("g", { class: "ge-node" });
       group.dataset.id = String(v.id);
-      group.append(svg("circle", { r: NODE_RADIUS }));
+      const circle = svg("circle");
       const text = svg("text");
       text.textContent = v.label;
-      group.append(text);
+      group.append(circle, text);
       this.nodeLayer.append(group);
+      // Grow the circle to fit long labels such as "(0, 1)". Measuring needs the text in the
+      // document; if it isn't rendered yet, estimate from the number of characters.
+      const width = text.getComputedTextLength() || v.label.length * 8;
+      v.r = radiusForLabel(width);
+      circle.setAttribute("r", String(v.r));
     }
     this.updatePositions();
   }
 
   private updatePositions(): void {
+    const groups = this.edgeLayer.children;
     this.links.forEach((link, i) => {
-      const group = this.edgeLayer.children[i];
-      group.classList.toggle("ge-selected", this.isSelectedEdge(link.source.id, link.target.id));
-      for (const line of group.children) {
+      groups[i].classList.toggle("ge-selected", this.isSelectedEdge(link.source.id, link.target.id));
+      for (const line of groups[i].children) {
         line.setAttribute("x1", String(link.source.x));
         line.setAttribute("y1", String(link.source.y));
         line.setAttribute("x2", String(link.target.x));
         line.setAttribute("y2", String(link.target.y));
+      }
+    });
+    this.loops.forEach((v, i) => {
+      const group = groups[this.links.length + i];
+      group.classList.toggle("ge-selected", this.isSelectedEdge(v.id, v.id));
+      for (const circle of group.children) {
+        // A small circle sitting on top of the vertex.
+        circle.setAttribute("cx", String(v.x));
+        circle.setAttribute("cy", String((v.y ?? 0) - v.r));
+        circle.setAttribute("r", String(v.r * 0.75));
       }
     });
     let i = 0;
@@ -275,7 +250,7 @@ class GraphEditor {
     this.forceButton.textContent = on ? "Force: on" : "Force: off";
     this.forceButton.setAttribute("aria-pressed", String(on));
     if (on) {
-      this.captureRestState();
+      captureRestState(this.simulation, [...this.vertices.values()], this.links);
       this.simulation.alpha(START_ALPHA).restart();
     } else {
       // Freezing keeps every vertex exactly where it is now.
@@ -300,8 +275,9 @@ class GraphEditor {
     return group ? [Number(group.dataset.u), Number(group.dataset.v)] : undefined;
   }
 
-  private findLink(u: number, v: number): Link | undefined {
-    return this.links.find(
+  private hasEdge(u: number, v: number): boolean {
+    if (u === v) return this.loops.some((l) => l.id === u);
+    return this.links.some(
       (l) => (l.source.id === u && l.target.id === v) || (l.source.id === v && l.target.id === u),
     );
   }
@@ -351,16 +327,11 @@ class GraphEditor {
       this.root.removeEventListener("pointercancel", up);
       if (dragging && vertex) {
         if (this.force) {
-          // Released vertices rejoin the simulation with their new spot as home;
-          // the vertices pushed aside spring back to theirs.
-          vertex.homeX = vertex.fx ?? vertex.x ?? 0;
-          vertex.homeY = vertex.fy ?? vertex.y ?? 0;
+          vertex.x = vertex.fx ?? vertex.x;
+          vertex.y = vertex.fy ?? vertex.y;
           vertex.fx = null;
           vertex.fy = null;
-          for (const l of this.links) {
-            if (l.source === vertex || l.target === vertex) l.rest = this.homeDistance(l.source, l.target);
-          }
-          this.refreshForces();
+          rehome(this.simulation, vertex, [...this.vertices.values()], this.links);
           this.simulation.alphaTarget(0);
         } else {
           this.sendPositions();
@@ -385,7 +356,7 @@ class GraphEditor {
     if (s?.kind === "vertex" && s.id === id) {
       this.select(null);
     } else if (s?.kind === "vertex") {
-      if (!this.findLink(s.id, id)) this.model.send({ type: "add_edge", u: s.id, v: id });
+      if (!this.hasEdge(s.id, id)) this.model.send({ type: "add_edge", u: s.id, v: id });
       // Selection moves on, so clicking vertices one after another draws a path.
       this.select({ kind: "vertex", id });
     } else {
@@ -426,11 +397,15 @@ class GraphEditor {
     if (e.key === "Escape") {
       this.select(null);
     } else if ((e.key === "Delete" || e.key === "Backspace") && s) {
-      e.preventDefault();
       if (s.kind === "vertex") this.model.send({ type: "remove_node", id: s.id });
       else this.model.send({ type: "remove_edge", u: s.u, v: s.v });
       this.select(null);
+    } else {
+      return;
     }
+    // Handled here: keep the key away from JupyterLab's own shortcuts.
+    e.preventDefault();
+    e.stopPropagation();
   }
 }
 

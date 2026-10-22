@@ -1,7 +1,8 @@
 """Initial vertex placement: crossing-free for planar graphs, with vertices spread apart.
 
-Positions are returned normalized to [0, 1] x [0, 1]. Quality is measured in pixels of
-the drawing area (`size`), because the front end stretches [0, 1] onto it.
+Positions are returned normalized to [0, 1] x [0, 1]; the front end maps that square onto the
+drawing area (`size`). Quality is measured in pixels of that area. Layouts keep their proportions
+(a circle stays a circle), except layered tree drawings, which may stretch.
 """
 
 import math
@@ -73,20 +74,31 @@ def clearance(graph: nx.Graph, pos: dict, size: tuple[int, int] = DEFAULT_SIZE) 
     return best
 
 
-def _normalize(pos: dict) -> dict[object, Point]:
-    """Scale each axis into [0, 1]. Affine, so crossings are preserved."""
+def _normalize(pos: dict, size: tuple[int, int], keep_aspect: bool = True) -> dict[object, Point]:
+    """Fit positions into the drawing area, centered. With keep_aspect, both axes get the
+    same scale, so shapes are not distorted. Either way the map is affine: crossings are preserved."""
     if not pos:
         return {}
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
     span_x = max(xs) - min(xs)
     span_y = max(ys) - min(ys)
-
-    def scale(value: float, low: float, span: float) -> float:
-        return 0.5 if span < 1e-12 else (value - low) / span
+    # Pixels per layout unit on each axis; a zero span (all on one line) doesn't limit the scale.
+    sx = size[0] / span_x if span_x > 1e-12 else math.inf
+    sy = size[1] / span_y if span_y > 1e-12 else math.inf
+    if keep_aspect:
+        sx = sy = min(sx, sy)
+    if math.isinf(sx):
+        sx = 0.0
+    if math.isinf(sy):
+        sy = 0.0
+    off_x = (size[0] - span_x * sx) / 2
+    off_y = (size[1] - span_y * sy) / 2
+    def unit(value: float) -> float:
+        return min(max(value, 0.0), 1.0)  # absorb floating-point rounding at the edges
 
     return {
-        node: (scale(x, min(xs), span_x), scale(y, min(ys), span_y))
+        node: (unit((off_x + (x - min(xs)) * sx) / size[0]), unit((off_y + (y - min(ys)) * sy) / size[1]))
         for node, (x, y) in pos.items()
     }
 
@@ -149,10 +161,11 @@ def tree_layout(graph: nx.Graph) -> dict:
     return pos
 
 
-def _candidates(graph: nx.Graph, seed: int) -> list[dict]:
+def _candidates(graph: nx.Graph, seed: int, size: tuple[int, int]) -> list[dict]:
     candidates = []
+    stretched = []
     if nx.is_tree(graph):
-        candidates.append(tree_layout(graph))
+        stretched.append(tree_layout(graph))
     if graph.number_of_nodes() >= 4 and is_planar(graph) and nx.node_connectivity(graph) >= 3:
         candidates.append(tutte_layout(graph))
     small = graph.number_of_nodes() <= MAX_NODES_FOR_ALL_CANDIDATES
@@ -162,7 +175,12 @@ def _candidates(graph: nx.Graph, seed: int) -> list[dict]:
         candidates.append(nx.spring_layout(graph, seed=seed + offset))
     if is_planar(graph):
         candidates.append(nx.planar_layout(graph))
-    return [_normalize({v: (float(x), float(y)) for v, (x, y) in c.items()}) for c in candidates]
+    def as_floats(c: dict) -> dict:
+        return {v: (float(x), float(y)) for v, (x, y) in c.items()}
+
+    return [_normalize(as_floats(c), size, keep_aspect=False) for c in stretched] + [
+        _normalize(as_floats(c), size) for c in candidates
+    ]
 
 
 def _creates_crossing(graph: nx.Graph, pos: dict, moved, new: Point) -> bool:
@@ -211,7 +229,7 @@ def _refine(graph: nx.Graph, pos: dict, size: tuple[int, int]) -> dict:
             if not _creates_crossing(graph, pos, v, new):
                 pos[v] = new
         step *= 0.97
-    return _normalize(pos)
+    return _normalize(pos, size)
 
 
 def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict:
@@ -219,12 +237,12 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
         return {next(iter(graph.nodes)): (0.5, 0.5)}
     if graph.number_of_edges() > MAX_EDGES_FOR_SEARCH:
         pos = nx.planar_layout(graph) if is_planar(graph) else nx.spring_layout(graph, seed=seed)
-        return _normalize({v: (float(x), float(y)) for v, (x, y) in pos.items()})
+        return _normalize({v: (float(x), float(y)) for v, (x, y) in pos.items()}, size)
 
     # Fewest crossings first, then the most space between vertices.
     scored = [
         (-count_crossings(graph, pos), clearance(graph, pos, size), i, pos)
-        for i, pos in enumerate(_candidates(graph, seed))
+        for i, pos in enumerate(_candidates(graph, seed, size))
     ]
     neg_crossings, space, _, best = max(scored, key=lambda item: item[:3])
     if neg_crossings == 0 and space < GOOD_CLEARANCE:
