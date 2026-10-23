@@ -14,6 +14,7 @@ import {
   type Link,
   type Vertex,
 } from "./forces";
+import { clickVertex, hint, keyAction, wheelZoomFactor, type Selection } from "./interaction";
 import { graphStyle, type Colors } from "./style";
 import "./widget.css";
 
@@ -24,16 +25,14 @@ interface Model {
   positions: Record<string, [number, number]>;
   width: number;
   height: number;
+  can_undo: boolean;
+  can_redo: boolean;
 }
-
-type Selection = { kind: "vertex"; id: number } | { kind: "edge"; u: number; v: number } | null;
 
 const PADDING = 20; // must match PADDING in widget.py
 const LABEL_FONT = "600 13px system-ui, sans-serif";
 const ZOOM_STEP = 1.25;
-
-const HELP =
-  "Click empty space: add vertex · Click two vertices: add edge · Drag: move · Double-click or Delete: remove";
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Colors come from JupyterLab's theme variables, with plain fallbacks for other hosts.
 function themeColor(el: HTMLElement, name: string, fallback: string): string {
@@ -74,6 +73,16 @@ class GraphEditor {
   private readonly cy: Core;
   private readonly container = document.createElement("div");
   private readonly forceButton = button("Force: off", "Turn physics on or off");
+  private readonly undoButton = button("Undo", "Undo (Ctrl+Z)");
+  private readonly redoButton = button("Redo", "Redo (Ctrl+Y)");
+  private readonly help = document.createElement("span");
+  // Dashed line from the selected vertex to the pointer: the edge the next click would add.
+  private readonly preview = document.createElementNS(SVG_NS, "svg");
+  private readonly previewLine = document.createElementNS(SVG_NS, "line");
+  private pointer: { x: number; y: number } | null = null; // rendered coordinates
+  private hovered: number | null = null; // vertex under the pointer
+  private dragging = false;
+  private moveRecorded = false;
   private structureKey = "";
 
   constructor(private readonly model: AnyModel<Model>, el: HTMLElement, signal: AbortSignal) {
@@ -84,10 +93,8 @@ class GraphEditor {
     const zoomOut = button("−", "Zoom out");
     const zoomIn = button("+", "Zoom in");
     const fit = button("Fit", "Show the whole graph");
-    const help = document.createElement("span");
-    help.className = "ge-help";
-    help.textContent = HELP;
-    toolbar.append(this.forceButton, zoomOut, zoomIn, fit, help);
+    this.help.className = "ge-help";
+    toolbar.append(this.forceButton, this.undoButton, this.redoButton, zoomOut, zoomIn, fit, this.help);
 
     this.container.className = "ge-canvas";
     this.container.tabIndex = 0;
@@ -99,7 +106,7 @@ class GraphEditor {
       layout: { name: "preset" },
       autounselectify: true, // selection is ours, so clicks behave the same everywhere
       boxSelectionEnabled: false,
-      userZoomingEnabled: false, // the mouse wheel keeps scrolling the notebook; use the buttons
+      userZoomingEnabled: false, // the plain wheel keeps scrolling the notebook; see onWheel
       minZoom: 0.2,
       maxZoom: 5,
       style: graphStyle(themeColors(el)),
@@ -113,6 +120,9 @@ class GraphEditor {
     observer.observe(this.container);
     signal.addEventListener("abort", () => observer.disconnect());
     signal.addEventListener("abort", () => this.cy.destroy());
+    this.preview.classList.add("ge-preview");
+    this.preview.append(this.previewLine);
+    this.container.append(this.preview);
 
     this.simulation = createSimulation()
       .on("tick", () => this.onTick())
@@ -120,10 +130,19 @@ class GraphEditor {
     signal.addEventListener("abort", () => this.simulation.stop());
 
     this.forceButton.addEventListener("click", () => this.setForce(!this.force), { signal });
+    this.undoButton.addEventListener("click", () => this.edit({ type: "undo" }), { signal });
+    this.redoButton.addEventListener("click", () => this.edit({ type: "redo" }), { signal });
+    // After a toolbar click, keyboard shortcuts (Ctrl+Z, Delete) go to the graph again.
+    toolbar.addEventListener("click", (e) => {
+      if (e.target instanceof HTMLButtonElement) this.container.focus();
+    }, { signal });
     zoomIn.addEventListener("click", () => this.zoomBy(ZOOM_STEP), { signal });
     zoomOut.addEventListener("click", () => this.zoomBy(1 / ZOOM_STEP), { signal });
     fit.addEventListener("click", () => this.cy.fit(undefined, PADDING), { signal });
     this.container.addEventListener("keydown", (e) => this.onKeyDown(e), { signal });
+    // Not passive: Ctrl+wheel must not zoom the whole browser page.
+    this.container.addEventListener("wheel", (e) => this.onWheel(e), { signal, passive: false });
+    this.container.addEventListener("mouseleave", () => this.movePointer(null, null), { signal });
     this.bindGraphEvents();
 
     const onModelChange = () => this.loadFromModel();
@@ -131,6 +150,15 @@ class GraphEditor {
       model.on(`change:${trait}`, onModelChange);
       signal.addEventListener("abort", () => model.off(`change:${trait}`, onModelChange));
     }
+    const onHistoryChange = () => this.updateHistoryButtons();
+    for (const trait of ["can_undo", "can_redo"]) {
+      model.on(`change:${trait}`, onHistoryChange);
+      signal.addEventListener("abort", () => model.off(`change:${trait}`, onHistoryChange));
+    }
+    const onMessage = (msg: unknown) => this.onCustomMessage(msg);
+    model.on("msg:custom", onMessage);
+    signal.addEventListener("abort", () => model.off("msg:custom", onMessage));
+    this.updateHistoryButtons();
     this.loadFromModel();
     this.setForce(false);
   }
@@ -163,8 +191,11 @@ class GraphEditor {
     v.y = Math.min(Math.max(v.y ?? 0, v.r), this.h - v.r);
   }
 
-  private zoomBy(factor: number): void {
-    this.cy.zoom({ level: this.cy.zoom() * factor, renderedPosition: { x: this.w / 2, y: this.h / 2 } });
+  // Zooms around a point in rendered coordinates, the canvas centre by default.
+  private zoomBy(factor: number, at = { x: this.w / 2, y: this.h / 2 }): void {
+    const level = Math.min(Math.max(this.cy.zoom() * factor, this.cy.minZoom()), this.cy.maxZoom());
+    this.cy.zoom({ level, renderedPosition: at });
+    this.updatePreview();
   }
 
   // ---- state from Python ----
@@ -234,11 +265,41 @@ class GraphEditor {
     this.updatePositions();
   }
 
-  private sendPositions(): void {
+  private currentPositions(): Record<string, [number, number]> {
     const positions: Record<string, [number, number]> = {};
     for (const v of this.vertices.values()) positions[String(v.id)] = this.toModel(v.x ?? 0, v.y ?? 0);
-    this.model.set("positions", positions);
+    return positions;
+  }
+
+  private sendPositions(): void {
+    this.model.set("positions", this.currentPositions());
     this.model.save_changes();
+  }
+
+  // Edits go to Python with the positions on screen, so undo restores exactly those.
+  private edit(msg: Record<string, unknown>): void {
+    this.model.send({ ...msg, positions: this.currentPositions() });
+  }
+
+  // After undo or redo every vertex jumps to the restored spot, which becomes its home.
+  private onCustomMessage(msg: unknown): void {
+    const m = msg as { type?: string; positions?: Record<string, [number, number]> };
+    if (m.type !== "set_positions" || !m.positions) return;
+    for (const v of this.vertices.values()) {
+      const p = m.positions[String(v.id)];
+      if (!p) continue;
+      [v.x, v.y] = this.toScreen(p);
+      v.vx = 0;
+      v.vy = 0;
+      this.clamp(v);
+    }
+    captureRestState(this.simulation, [...this.vertices.values()], this.links);
+    this.updatePositions();
+  }
+
+  private updateHistoryButtons(): void {
+    this.undoButton.disabled = !this.model.get("can_undo");
+    this.redoButton.disabled = !this.model.get("can_redo");
   }
 
   // ---- drawing ----
@@ -256,6 +317,42 @@ class GraphEditor {
         edge.toggleClass("ge-selected", selected);
       });
     });
+    const text = hint(s);
+    if (this.help.textContent !== text) this.help.textContent = text;
+    this.updatePreview();
+  }
+
+  private updatePreview(): void {
+    const selectedId = this.selection?.kind === "vertex" ? this.selection.id : null;
+    const from = selectedId === null ? null : this.cy.getElementById(nodeId(selectedId));
+    if (!from || from.empty() || !this.pointer || this.dragging) {
+      this.preview.style.display = "none";
+      return;
+    }
+    // Snaps to the vertex under the pointer, and runs border to border, not centre to centre.
+    const to = this.hovered !== null && this.hovered !== selectedId ? this.cy.getElementById(nodeId(this.hovered)) : null;
+    const a = from.renderedPosition();
+    const b = to?.nonempty() ? to.renderedPosition() : this.pointer;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const startGap = from.renderedWidth() / 2;
+    const endGap = to?.nonempty() ? to.renderedWidth() / 2 : 0;
+    if (length <= startGap + endGap) {
+      this.preview.style.display = "none";
+      return;
+    }
+    const ux = (b.x - a.x) / length;
+    const uy = (b.y - a.y) / length;
+    this.previewLine.setAttribute("x1", String(a.x + ux * startGap));
+    this.previewLine.setAttribute("y1", String(a.y + uy * startGap));
+    this.previewLine.setAttribute("x2", String(b.x - ux * endGap));
+    this.previewLine.setAttribute("y2", String(b.y - uy * endGap));
+    this.preview.style.display = "";
+  }
+
+  private movePointer(at: { x: number; y: number } | null, hovered: number | null): void {
+    this.pointer = at;
+    this.hovered = hovered;
+    this.updatePreview();
   }
 
   private onTick(): void {
@@ -305,7 +402,7 @@ class GraphEditor {
     const cy = this.cy;
     cy.on("tap", "node", (e) => {
       this.container.focus();
-      this.clickVertex(idOfNode(e.target.id()));
+      this.onClickVertex(idOfNode(e.target.id()));
     });
     cy.on("tap", "edge", (e) => {
       this.container.focus();
@@ -315,7 +412,7 @@ class GraphEditor {
       this.select(selected ? null : { kind: "edge", u, v });
     });
     // `onetap` fires only when the tap is not part of a double tap, so double-clicking
-    // empty space doesn't add a vertex.
+    // empty space doesn't add a vertex. Double-click removes nothing (research/06).
     cy.on("onetap", (e) => {
       if (e.target !== cy) return;
       this.container.focus();
@@ -323,26 +420,31 @@ class GraphEditor {
         this.select(null);
       } else {
         const [x, y] = this.toModel(e.position.x, e.position.y);
-        this.model.send({ type: "add_node", x, y });
+        this.edit({ type: "add_node", x, y });
       }
     });
-    cy.on("dbltap", "node", (e) => {
-      this.model.send({ type: "remove_node", id: idOfNode(e.target.id()) });
-      this.select(null);
+    cy.on("mousemove", (e) => {
+      const target = e.target;
+      const hovered = target !== cy && target.isNode() ? idOfNode(target.id()) : null;
+      this.movePointer(e.renderedPosition, hovered);
     });
-    cy.on("dbltap", "edge", (e) => {
-      const [u, v] = this.edgeEnds(e);
-      this.model.send({ type: "remove_edge", u, v });
-      this.select(null);
-    });
+    cy.on("viewport", () => this.updatePreview());
 
     cy.on("grab", "node", () => {
+      this.dragging = true;
+      this.moveRecorded = false;
+      this.updatePreview();
       if (this.force) this.simulation.alphaTarget(0.3).restart();
     });
     cy.on("drag", "node", (e) => {
       const node: NodeSingular = e.target;
       const vertex = this.vertices.get(idOfNode(node.id()));
       if (!vertex) return;
+      if (!this.moveRecorded) {
+        // A grab without movement is a click; only a real drag becomes an undo step.
+        this.moveRecorded = true;
+        this.edit({ type: "move" });
+      }
       const p = node.position();
       vertex.x = p.x;
       vertex.y = p.y;
@@ -355,6 +457,7 @@ class GraphEditor {
       }
     });
     cy.on("free", "node", (e) => {
+      this.dragging = false;
       const vertex = this.vertices.get(idOfNode(e.target.id()));
       if (!vertex) return;
       if (this.force) {
@@ -370,33 +473,37 @@ class GraphEditor {
     });
   }
 
-  private clickVertex(id: number): void {
-    const s = this.selection;
-    if (s?.kind === "vertex" && s.id === id) {
-      this.select(null);
-    } else if (s?.kind === "vertex") {
-      if (!this.hasEdge(s.id, id)) this.model.send({ type: "add_edge", u: s.id, v: id });
-      // Selection moves on, so clicking vertices one after another draws a path.
-      this.select({ kind: "vertex", id });
-    } else {
-      this.select({ kind: "vertex", id });
-    }
+  private onClickVertex(id: number): void {
+    const result = clickVertex(this.selection, id, (u, v) => this.hasEdge(u, v));
+    if (result.addEdge) this.edit({ type: "add_edge", u: result.addEdge[0], v: result.addEdge[1] });
+    this.select(result.selection);
   }
 
   private onKeyDown(e: KeyboardEvent): void {
     const s = this.selection;
-    if (e.key === "Escape") {
-      this.select(null);
-    } else if ((e.key === "Delete" || e.key === "Backspace") && s) {
-      if (s.kind === "vertex") this.model.send({ type: "remove_node", id: s.id });
-      else this.model.send({ type: "remove_edge", u: s.u, v: s.v });
+    const action = keyAction(e, s);
+    if (action === null) return;
+    if (action === "undo" || action === "redo") {
+      this.edit({ type: action });
+    } else if (action === "remove" && s) {
+      if (s.kind === "vertex") this.edit({ type: "remove_node", id: s.id });
+      else this.edit({ type: "remove_edge", u: s.u, v: s.v });
       this.select(null);
     } else {
-      return;
+      this.select(null);
     }
-    // Handled here: keep the key away from JupyterLab's own shortcuts.
+    // Handled here: keep the key away from JupyterLab's own shortcuts (its own undo too).
     e.preventDefault();
     e.stopPropagation();
+  }
+
+  // A plain wheel scrolls the notebook; Ctrl+wheel (or a touchpad pinch) zooms at the pointer.
+  private onWheel(e: WheelEvent): void {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const rect = this.container.getBoundingClientRect();
+    const at = { x: e.clientX - rect.left - this.container.clientLeft, y: e.clientY - rect.top - this.container.clientTop };
+    this.zoomBy(wheelZoomFactor(e.deltaY, e.deltaMode), at);
   }
 }
 

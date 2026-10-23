@@ -129,3 +129,112 @@ def test_self_loops_are_sent():
 def test_front_end_bundle_exists():
     # Fails if `npm run build` in js/ was not run.
     assert (_STATIC / "widget.js").exists() and (_STATIC / "widget.css").exists()
+
+
+# ---- undo / redo ----
+
+
+def test_undo_and_redo_add_node():
+    graph = nx.path_graph(2)
+    widget = GraphWidget(graph)
+    send(widget, type="add_node", x=0.5, y=0.5)
+    assert 2 in graph and widget.can_undo
+    send(widget, type="undo")
+    assert set(graph) == {0, 1} and not widget.can_undo and widget.can_redo
+    send(widget, type="redo")
+    assert 2 in graph and widget.can_undo and not widget.can_redo
+
+
+def test_undo_remove_node_restores_edges_attributes_and_id():
+    graph = nx.Graph()
+    graph.add_node("a", color="red")
+    graph.add_edge("a", "b", weight=3)
+    widget = GraphWidget(graph)
+    i = ids(widget)
+    position = widget.positions[str(i["a"])]
+    send(widget, type="remove_node", id=i["a"])
+    send(widget, type="undo")
+    assert graph.nodes["a"] == {"color": "red"}
+    assert graph.edges["a", "b"] == {"weight": 3}
+    assert ids(widget) == i
+    assert widget.positions[str(i["a"])] == position
+
+
+def test_undo_keeps_the_same_graph_object_and_its_attributes():
+    graph = nx.path_graph(3)
+    graph.graph["name"] = "path"
+    widget = GraphWidget(graph)
+    send(widget, type="remove_edge", u=0, v=1)
+    send(widget, type="undo")
+    assert widget.graph is graph
+    assert graph.has_edge(0, 1) and graph.graph == {"name": "path"}
+
+
+def test_undo_move_restores_positions_sent_with_the_message():
+    widget = GraphWidget(nx.path_graph(2))
+    before = {"0": [0.1, 0.1], "1": [0.9, 0.9]}
+    send(widget, type="move", positions=before)
+    widget.positions = {"0": [0.5, 0.5], "1": [0.9, 0.9]}  # the drag result, as the front end syncs it
+    sent = []
+    widget.send = sent.append
+    send(widget, type="undo", positions=dict(widget.positions))
+    assert widget.positions == before
+    assert sent == [{"type": "set_positions", "positions": before}]
+    send(widget, type="redo")
+    assert widget.positions == {"0": [0.5, 0.5], "1": [0.9, 0.9]}
+
+
+def test_new_edit_clears_redo():
+    graph = nx.empty_graph(2)
+    widget = GraphWidget(graph)
+    send(widget, type="add_edge", u=0, v=1)
+    send(widget, type="undo")
+    send(widget, type="add_node", x=0, y=0)
+    assert not widget.can_redo
+    send(widget, type="redo")
+    assert not graph.has_edge(0, 1)
+
+
+def test_edits_that_change_nothing_are_not_recorded():
+    widget = GraphWidget(nx.path_graph(2))
+    send(widget, type="add_edge", u=0, v=1)  # already there
+    send(widget, type="add_edge", u=0, v=0)  # self-loop
+    send(widget, type="remove_edge", u=0, v=99)
+    send(widget, type="remove_node", id=99)
+    send(widget, type="nonsense")
+    assert not widget.can_undo
+
+
+def test_undo_with_empty_history_does_nothing():
+    graph = nx.path_graph(2)
+    widget = GraphWidget(graph)
+    widget.undo()
+    widget.redo()
+    assert set(graph.edges) == {(0, 1)}
+
+
+def test_history_is_limited():
+    from graph_editor_jupyter.widget import HISTORY_LIMIT
+
+    graph = nx.empty_graph(0)
+    widget = GraphWidget(graph)
+    for _ in range(HISTORY_LIMIT + 5):
+        send(widget, type="add_node", x=0, y=0)
+    while widget.can_undo:
+        widget.undo()
+    assert len(graph) == 5
+
+
+def test_undo_from_python():
+    graph = nx.path_graph(2)
+    widget = GraphWidget(graph)
+    send(widget, type="remove_edge", u=0, v=1)
+    widget.undo()
+    assert graph.has_edge(0, 1)
+
+
+def test_malformed_positions_are_ignored():
+    widget = GraphWidget(nx.path_graph(2))
+    send(widget, type="add_node", x=0, y=0, positions={"junk": [0, 0], "0": [0.3, 0.3]})
+    assert "junk" not in widget.positions
+    assert widget.positions["0"] == [0.3, 0.3]
