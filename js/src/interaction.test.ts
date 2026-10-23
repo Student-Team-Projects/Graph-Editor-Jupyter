@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   clickVertex,
+  easeInOut,
   HELP,
   hint,
   isRepeatClick,
@@ -74,6 +75,15 @@ test("hint says what the next click does", () => {
   assert.equal(hint(null), HELP);
   assert.match(hint({ kind: "vertex", id: 1 }), /connect/);
   assert.match(hint({ kind: "edge", u: 1, v: 2 }), /remove edge/);
+});
+
+test("glide starts slow, ends exactly at the target, and never overshoots", () => {
+  assert.equal(easeInOut(0), 0);
+  assert.equal(easeInOut(1), 1);
+  assert.equal(easeInOut(0.5), 0.5);
+  assert.ok(easeInOut(0.1) < 0.1);
+  assert.equal(easeInOut(2), 1);
+  for (let t = 0; t <= 1; t += 0.05) assert.ok(easeInOut(t) >= 0 && easeInOut(t) <= 1);
 });
 
 test("wheel zoom: up zooms in, down zooms out, big jumps are limited", () => {

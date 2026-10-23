@@ -238,3 +238,63 @@ def test_malformed_positions_are_ignored():
     send(widget, type="add_node", x=0, y=0, positions={"junk": [0, 0], "0": [0.3, 0.3]})
     assert "junk" not in widget.positions
     assert widget.positions["0"] == [0.3, 0.3]
+
+
+# ---- arrange ----
+
+
+def test_arrange_redraws_a_tangled_planar_graph_without_crossings():
+    from graph_editor_jupyter.layout import count_crossings
+
+    graph = nx.cycle_graph(6)
+    widget = GraphWidget(graph)
+    tangled = {"0": [0, 0], "1": [1, 1], "2": [0, 1], "3": [1, 0], "4": [0.5, 0], "5": [0.5, 1]}
+    sent = []
+    widget.send = sent.append
+    send(widget, type="arrange", positions=tangled)
+    by_node = {widget._node_of[int(k)]: p for k, p in widget.positions.items()}
+    assert count_crossings(graph, by_node) == 0
+    assert sent == [{"type": "set_positions", "positions": widget.positions, "settle": True}]
+
+
+def test_arrange_can_be_undone():
+    widget = GraphWidget(nx.cycle_graph(4))
+    tangled = {"0": [0, 0], "1": [1, 1], "2": [0, 1], "3": [1, 0]}
+    send(widget, type="arrange", positions=tangled)
+    send(widget, type="undo")
+    assert widget.positions == tangled
+
+
+def test_arrange_when_already_arranged_adds_no_undo_step():
+    widget = GraphWidget(nx.path_graph(4))
+    widget.arrange()
+    assert not widget.can_undo
+
+
+def test_arrange_includes_vertices_added_in_the_editor():
+    graph = nx.path_graph(2)
+    widget = GraphWidget(graph)
+    send(widget, type="add_node", x=0.5, y=0.5)
+    send(widget, type="add_edge", u=1, v=ids(widget)["2"])
+    widget.arrange()
+    assert set(widget.positions) == {str(i) for i in ids(widget).values()}
+
+
+def test_arrange_reports_back_even_if_layout_fails(monkeypatch):
+    widget = GraphWidget(nx.path_graph(3))
+    sent = []
+    widget.send = sent.append
+
+    def broken():
+        raise RuntimeError("layout bug")
+
+    monkeypatch.setattr(widget, "_best_layout", broken)
+    with pytest.raises(RuntimeError):
+        widget.arrange()
+    assert sent and sent[0]["type"] == "set_positions"
+
+
+def test_arrange_empty_graph():
+    widget = GraphWidget(nx.Graph())
+    widget.arrange()
+    assert widget.positions == {}

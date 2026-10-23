@@ -28,7 +28,8 @@ class GraphWidget(anywidget.AnyWidget):
     Vertices get stable integer ids for the front end, because NetworkX nodes can be any
     hashable object. Positions are normalized to [0, 1] and owned by the front end once shown.
 
-    Edits from the editor can be undone (undo/redo, also Ctrl+Z/Ctrl+Y in the editor). Undo
+    The editor's Arrange button redraws the current graph with the first-layout algorithm
+    (arrange() does the same from Python). Edits from the editor can be undone (undo/redo, also Ctrl+Z/Ctrl+Y in the editor). Undo
     restores the graph as the editor left it, so it also reverts changes made to the graph in
     Python since that edit.
     """
@@ -60,10 +61,14 @@ class GraphWidget(anywidget.AnyWidget):
         for node in graph.nodes:
             self._register(node)
 
-        pos = initial_layout(graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
-        self.positions = {str(self._id_of[node]): list(p) for node, p in pos.items()}
+        self.positions = self._best_layout()
         self._sync_structure()
         self.on_msg(self._on_msg)
+
+    def _best_layout(self) -> dict:
+        """Positions from the first-layout algorithm: no crossings if planar, few otherwise."""
+        pos = initial_layout(self.graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
+        return {str(self._id_of[node]): list(p) for node, p in pos.items()}
 
     def _register(self, node) -> int:
         node_id = self._next_id
@@ -135,6 +140,10 @@ class GraphWidget(anywidget.AnyWidget):
         self.can_undo = bool(self._undo)
         self.can_redo = bool(self._redo)
 
+    def arrange(self) -> None:
+        """Redraw the graph like the first layout: no crossings if planar, few otherwise."""
+        self._on_msg(self, {"type": "arrange"}, [])
+
     def undo(self) -> None:
         """Revert the last edit made in the editor."""
         self._step(self._undo, self._redo)
@@ -165,11 +174,16 @@ class GraphWidget(anywidget.AnyWidget):
         if positions is not None:
             known = {str(node_id) for node_id in self._node_of}
             self.positions = {k: p for k, p in positions.items() if k in known}
-        if self._apply(kind, content):
-            self._undo = (self._undo + [before])[-HISTORY_LIMIT:]
-            self._redo = []
-            self._update_history_flags()
-        self._sync_structure()
+        try:
+            if self._apply(kind, content):
+                self._undo = (self._undo + [before])[-HISTORY_LIMIT:]
+                self._redo = []
+                self._update_history_flags()
+            self._sync_structure()
+        finally:
+            if kind == "arrange":
+                # Also ends the "Arranging..." state in the front end, even if layout failed.
+                self.send({"type": "set_positions", "positions": self.positions, "settle": True})
 
     def _apply(self, kind, content: dict) -> bool:
         """Applies one edit; returns whether anything changed."""
@@ -199,5 +213,11 @@ class GraphWidget(anywidget.AnyWidget):
                 return False
             self.graph.remove_edge(u, v)
             return True
+        if kind == "arrange":
+            # Same algorithm as the first layout, on the graph as it is now.
+            new = self._best_layout()
+            changed = new != self.positions
+            self.positions = new
+            return changed
         # The front end sends this when a drag starts; the new positions follow in `positions`.
         return kind == "move"

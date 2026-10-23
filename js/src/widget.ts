@@ -16,9 +16,11 @@ import {
 } from "./forces";
 import {
   clickVertex,
+  easeInOut,
   hint,
   isRepeatClick,
   keyAction,
+  MOVE_MS,
   wheelZoomFactor,
   type Click,
   type Selection,
@@ -84,6 +86,8 @@ class GraphEditor {
   private readonly forceButton = button("Force: off", "Turn physics on or off");
   private readonly undoButton = button("Undo", "Undo (Ctrl+Z)");
   private readonly redoButton = button("Redo", "Redo (Ctrl+Y)");
+  private readonly arrangeButton = button("Arrange", "Redraw the graph with as few edge crossings as possible");
+  private animation = 0; // requestAnimationFrame id of the running glide
   private readonly help = document.createElement("span");
   // Dashed line from the selected vertex to the pointer: the edge the next click would add.
   private readonly preview = document.createElementNS(SVG_NS, "svg");
@@ -104,7 +108,7 @@ class GraphEditor {
     const zoomIn = button("+", "Zoom in");
     const fit = button("Fit", "Show the whole graph");
     this.help.className = "ge-help";
-    toolbar.append(this.forceButton, this.undoButton, this.redoButton, zoomOut, zoomIn, fit, this.help);
+    toolbar.append(this.forceButton, this.arrangeButton, this.undoButton, this.redoButton, zoomOut, zoomIn, fit, this.help);
 
     this.container.className = "ge-canvas";
     this.container.tabIndex = 0;
@@ -138,8 +142,10 @@ class GraphEditor {
       .on("tick", () => this.onTick())
       .on("end", () => this.sendPositions());
     signal.addEventListener("abort", () => this.simulation.stop());
+    signal.addEventListener("abort", () => cancelAnimationFrame(this.animation));
 
     this.forceButton.addEventListener("click", () => this.setForce(!this.force), { signal });
+    this.arrangeButton.addEventListener("click", () => this.arrange(), { signal });
     this.undoButton.addEventListener("click", () => this.edit({ type: "undo" }), { signal });
     this.redoButton.addEventListener("click", () => this.edit({ type: "redo" }), { signal });
     // After a toolbar click, keyboard shortcuts (Ctrl+Z, Delete) go to the graph again.
@@ -298,20 +304,55 @@ class GraphEditor {
     this.model.send({ ...msg, positions: this.currentPositions() });
   }
 
-  // After undo or redo every vertex jumps to the restored spot, which becomes its home.
+  // Layout can take a few seconds for non-planar graphs; the reply is a set_positions message.
+  private arrange(): void {
+    this.arrangeButton.disabled = true;
+    this.arrangeButton.textContent = "Arranging…";
+    this.edit({ type: "arrange" });
+  }
+
+  // After Arrange, undo or redo, vertices glide to the spots Python sent, which become their
+  // homes. After Arrange (`settle`), force mode then tidies up as when the editor opens.
   private onCustomMessage(msg: unknown): void {
-    const m = msg as { type?: string; positions?: Record<string, [number, number]> };
+    const m = msg as { type?: string; positions?: Record<string, [number, number]>; settle?: boolean };
     if (m.type !== "set_positions" || !m.positions) return;
+    this.arrangeButton.disabled = false;
+    this.arrangeButton.textContent = "Arrange";
+    const moves: { v: Vertex; x0: number; y0: number; x1: number; y1: number }[] = [];
     for (const v of this.vertices.values()) {
       const p = m.positions[String(v.id)];
       if (!p) continue;
-      [v.x, v.y] = this.toScreen(p);
+      const [x1, y1] = this.toScreen(p);
+      moves.push({ v, x0: v.x ?? 0, y0: v.y ?? 0, x1, y1 });
+    }
+    cancelAnimationFrame(this.animation);
+    this.simulation.stop();
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = reduceMotion ? 1 : (now - start) / MOVE_MS;
+      const k = easeInOut(t);
+      for (const { v, x0, y0, x1, y1 } of moves) {
+        if (this.cy.getElementById(nodeId(v.id)).grabbed()) continue;
+        v.x = x0 + (x1 - x0) * k;
+        v.y = y0 + (y1 - y0) * k;
+      }
+      this.updatePositions();
+      if (t < 1) this.animation = requestAnimationFrame(step);
+      else this.finishGlide(m.settle ?? false);
+    };
+    this.animation = requestAnimationFrame(step);
+  }
+
+  private finishGlide(settle: boolean): void {
+    for (const v of this.vertices.values()) {
       v.vx = 0;
       v.vy = 0;
       this.clamp(v);
     }
     captureRestState(this.simulation, [...this.vertices.values()], this.links);
     this.updatePositions();
+    if (this.force && settle) this.simulation.alpha(START_ALPHA).restart();
   }
 
   private updateHistoryButtons(): void {

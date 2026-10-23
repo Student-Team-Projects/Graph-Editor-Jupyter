@@ -67,6 +67,14 @@ export function keyAction(e: Key, selection: Selection): KeyAction {
   return null;
 }
 
+// Vertices glide to new spots (Arrange, undo) so the user can follow where everything went.
+export const MOVE_MS = 450;
+
+export function easeInOut(t: number): number {
+  const c = Math.min(Math.max(t, 0), 1);
+  return c < 0.5 ? 2 * c * c : 1 - (-2 * c + 2) ** 2 / 2;
+}
+
 const LINE_HEIGHT = 16; // pixels per wheel "line" (deltaMode 1)
 
 // Zoom factor for one wheel event; a pinch on a touchpad sends many small ones.
