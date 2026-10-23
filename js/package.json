@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/widget.ts --bundle --format=esm --minify --outdir=../src/graph_editor_jupyter/static",
+    "build": "esbuild src/widget.ts --bundle --format=esm --minify --outdir=../src/graph_editor_jupyter/static --metafile=.build-meta.json \"--banner:js=/*! Includes Cytoscape.js and d3-force; their licences are in THIRD_PARTY_LICENSES.txt */\" && node scripts/third-party-licenses.mjs .build-meta.json ../src/graph_editor_jupyter/static/THIRD_PARTY_LICENSES.txt",
     "dev": "esbuild src/widget.ts --bundle --format=esm --sourcemap=inline --outdir=../src/graph_editor_jupyter/static --watch",
     "typecheck": "tsc --noEmit",
     "test": "esbuild src/*.test.ts --bundle --platform=node --format=esm --outdir=.test --out-extension:.js=.mjs --log-level=warning && node --test .test/"

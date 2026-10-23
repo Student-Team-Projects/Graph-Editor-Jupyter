@@ -89,3 +89,12 @@ Not done yet: labels (showing, editing, colors), see requirements.md.
 **How edits travel:** the browser sends a message (`add_node`, `add_edge`, `remove_node`, `remove_edge`, `move` when a drag starts, `arrange`) to `GraphWidget._on_msg`, which changes the NetworkX graph and updates the `nodes`/`edges` traits. Positions are owned by the browser and sent back in the `positions` trait after a drag or when the physics settles.
 
 **Undo:** each edit message also carries the positions on screen. Before applying an edit, Python saves a snapshot (nodes and edges with their attributes, ids, positions) on the undo stack, last 100 edits. `undo`/`redo` messages, or `widget.undo()`/`widget.redo()` in Python, restore a snapshot in place and send `set_positions` so the browser moves vertices it already shows. The `can_undo`/`can_redo` traits enable the toolbar buttons.
+
+## Licensing
+
+Checked 2026-10-23. The project is MIT. `LICENSE` names the original authors (the 2024 `pygraphedit` team, github.com/EndRay/graph-editor) and the contributors; everyone is listed in `pyproject.toml`. Until then it held the placeholder owner from the Python packaging tutorial.
+
+- **Dependencies** are all permissive (MIT, ISC, BSD, Apache-2.0, PSF). Don't add GPL or proprietary ones: GPL would force its licence on our code. Check the licence before adding a package.
+- **Bundled code:** `widget.js` contains Cytoscape.js (MIT) and d3-force (ISC), whose licences require their notices in every copy. `npm run build` writes them to `static/THIRD_PARTY_LICENSES.txt`, shipped in the package; a test checks it.
+- **Researched code:** take ideas and algorithms (not protected by copyright in the EU, Directive 2009/24/EC), never copy code from sources we only studied.
+- **EU rules:** as free, non-commercial open source we are outside the Cyber Resilience Act; the editor collects no personal data (GDPR).
