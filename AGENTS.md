@@ -15,7 +15,8 @@ Read these files first, every session:
 
 ## Git rules (summary of docs/git-policy.md)
 
-- Never commit to `main` or `develop`. Create a branch from `develop` named `<type>/<short-description>`; pull requests target `develop`, never `main`.
+- Never commit to `main`. Code changes (`src/`, `js/src/`, their tests) go on a branch from `develop` named `<type>/<short-description>`; pull requests target `develop`, never `main`.
+- Small tooling, config and docs changes may be committed directly to `develop` (see docs/git-policy.md).
 - `main` holds the old version and stays untouched until the professor approves the new one.
 - Commit messages: **one line, at most 50 characters, no body, no AI attribution or Co-Authored-By lines.** Format: `<type>: <what changed>`, with type one of `feat`, `fix`, `refactor`, `test`, `docs`, `chore`.
 - Never push, merge, tag, or change anything on GitHub unless the user explicitly asks in this session.

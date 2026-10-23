@@ -11,8 +11,9 @@ develop   integration branch: all new work lands here
 ```
 
 - **`main`** keeps the old, published version. Nobody commits or merges into it during the rewrite.
-- **`develop`** is where the team's work comes together. Nobody commits to it directly either.
-- Every task gets a short-lived branch **from `develop`**, merged back into `develop` through a pull request.
+- **`develop`** is where the team's work comes together. Code changes don't go to it directly.
+- Every task that changes code (`src/`, `js/src/`, their tests) gets a short-lived branch **from `develop`**, merged back into `develop` through a pull request.
+- **Exception: small tooling, config and docs changes may be committed directly to `develop`** (for example a launcher script, an IDE run configuration, `.gitignore`, a docs fix). Commit format and "tests pass first" still apply. Decided by the team lead, 2026-10-23: a pull request for a one-file config change is more ceremony than help.
 - No reviews are required. The author merges their own pull request.
 - Merge task branches with **squash merge** only, so each pull request becomes **one commit** on `develop`.
 - Delete the task branch after merging.
