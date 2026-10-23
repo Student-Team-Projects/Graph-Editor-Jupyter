@@ -176,7 +176,8 @@ class GraphEditor {
     signal.addEventListener("abort", () => model.off("msg:custom", onMessage));
     this.updateHistoryButtons();
     this.loadFromModel();
-    this.setForce(false);
+    // Force starts on (team decision 2026-10-23); it is gentle, so the first layout survives.
+    this.setForce(true);
   }
 
   // ---- coordinates ----

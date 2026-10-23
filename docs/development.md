@@ -81,7 +81,7 @@ Done: package skeleton, widget draws the graph, correct planarity check, crossin
 
 **Non-planar graphs** (`_CrossingSearch`): two phases. First the fewest crossings (vertex movement with random shakes, from the best candidates including a planarization candidate), then better looks (stress plus a vertex-edge distance term) without adding crossings. Details, sources and results: [research/04-crossing-minimization.md](research/04-crossing-minimization.md).
 
-Done: dragging, force/freeze toggle (d3-force, starts frozen so the first layout stays as computed; force mode is gentle and pushes vertices off edges, see research/03 and 05); drawing with Cytoscape.js; zoom buttons and Ctrl+wheel (a plain wheel keeps scrolling the notebook), adding and removing vertices and edges, edits go straight into the NetworkX graph; undo/redo; a preview line and a hint while drawing an edge (research/06).
+Done: dragging, force/freeze toggle (d3-force, starts with force on, which is gentle enough to keep the first layout and pushes vertices off edges, see research/03 and 05); drawing with Cytoscape.js; zoom buttons and Ctrl+wheel (a plain wheel keeps scrolling the notebook), adding and removing vertices and edges, edits go straight into the NetworkX graph; undo/redo; a preview line and a hint while drawing an edge (research/06).
 
 Not done yet: labels (showing, editing, colors), see requirements.md.
 

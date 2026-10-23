@@ -37,6 +37,7 @@ Date: 2026-10-23. Purpose: copy the conventions users already know, so our edito
 - **Dragging in force mode:** the dragged vertex is pinned to the pointer and nearby vertices get pushed aside. **On release it rejoins the simulation with the drop spot as its new home**, and the pushed vertices spring back to theirs.
 - **New edge:** click one vertex, then another (not drag from vertex to vertex), so dragging always means moving.
 - Switching modes never resets the layout.
+- **Force is on when the editor opens** (team decision, 2026-10-23; before that it started frozen). Gentle force mode keeps the first layout's crossings, so starting with it costs nothing and shows the physics right away.
 
 ## Implementation notes
 
