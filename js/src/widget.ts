@@ -14,6 +14,7 @@ import {
   type Link,
   type Vertex,
 } from "./forces";
+import { graphStyle, type Colors } from "./style";
 import "./widget.css";
 
 // Synced with GraphWidget traits in widget.py.
@@ -55,41 +56,13 @@ function button(text: string, title: string): HTMLButtonElement {
   return b;
 }
 
-// Colours come from JupyterLab's theme, read when called.
-function graphStyle(el: HTMLElement): cytoscape.StylesheetJson {
-  const ink = themeColor(el, "--jp-ui-font-color0", "#1a1a1a");
-  const paper = themeColor(el, "--jp-layout-color0", "#ffffff");
-  const accent = themeColor(el, "--jp-brand-color1", "#1976d2");
-  const accentSoft = themeColor(el, "--jp-brand-color3", "#bbdefb");
-  return [
-    {
-      selector: "node",
-      style: {
-        width: "data(size)",
-        height: "data(size)",
-        "background-color": paper,
-        "border-color": ink,
-        "border-width": 2,
-        label: "data(label)",
-        color: ink,
-        "font-family": "system-ui, sans-serif",
-        "font-size": 13,
-        "font-weight": 600,
-        "text-valign": "center",
-        "text-halign": "center",
-      },
-    },
-    {
-      selector: "edge",
-      style: { width: 2, "line-color": ink, "curve-style": "bezier" },
-    },
-    {
-      selector: "edge:loop",
-      style: { "loop-direction": "0deg", "loop-sweep": "45deg", "control-point-step-size": 40 },
-    },
-    { selector: "node.ge-selected", style: { "background-color": accentSoft, "border-color": accent, "border-width": 3 } },
-    { selector: "edge.ge-selected", style: { "line-color": accent, width: 3 } },
-  ];
+function themeColors(el: HTMLElement): Colors {
+  return {
+    ink: themeColor(el, "--jp-ui-font-color0", "#1a1a1a"),
+    paper: themeColor(el, "--jp-layout-color0", "#ffffff"),
+    accent: themeColor(el, "--jp-brand-color1", "#1976d2"),
+    accentSoft: themeColor(el, "--jp-brand-color3", "#bbdefb"),
+  };
 }
 
 class GraphEditor {
@@ -129,13 +102,13 @@ class GraphEditor {
       userZoomingEnabled: false, // the mouse wheel keeps scrolling the notebook; use the buttons
       minZoom: 0.2,
       maxZoom: 5,
-      style: graphStyle(el),
+      style: graphStyle(themeColors(el)),
     });
     // The widget is created before Jupyter attaches it to the page: until then the canvas has
     // no size and theme colours can't be read. Refresh both once it is visible.
     const observer = new ResizeObserver(() => {
       this.cy.resize();
-      this.cy.style(graphStyle(el));
+      this.cy.style(graphStyle(themeColors(el)));
     });
     observer.observe(this.container);
     signal.addEventListener("abort", () => observer.disconnect());
