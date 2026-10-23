@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graphStyle } from "./style";
 
@@ -22,4 +23,13 @@ test("no default press overlays", () => {
 test("selection uses the accent colour", () => {
   assert.equal(styleOf("node.ge-selected")["border-color"], colors.accent);
   assert.equal(styleOf("edge.ge-selected")["line-color"], colors.accent);
+});
+
+// Regression: clicking Undo quickly selected the word "Undo" (a double-click selects text).
+test("toolbar text can't be selected by fast clicks", () => {
+  const css = readFileSync("src/widget.css", "utf8");
+  const toolbar = css.match(/\.ge-toolbar \{([^}]*)\}/);
+  assert.ok(toolbar, "no .ge-toolbar rule");
+  assert.match(toolbar[1], /(^|[^-])user-select: none/);
+  assert.match(toolbar[1], /-webkit-user-select: none/); // Safari
 });

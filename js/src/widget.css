@@ -17,6 +17,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  /* Clicking Undo fast is a double-click, which would select the button's word. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .graph-editor .ge-button {
