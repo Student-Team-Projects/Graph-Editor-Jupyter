@@ -45,6 +45,7 @@ npm run build
 | Type-check TypeScript | `cd js && npm run typecheck` |
 | Run Python tests | `pytest` |
 | Start Jupyter | `jupyter lab`, then open `main.ipynb` |
+| Start the demo in one step | `python run.py` (rebuilds the front end if `js/src` changed, then opens `main.ipynb` in JupyterLab). In PyCharm: the "Run demo" configuration, Shift+F10. |
 
 After rebuilding the front end, rerun the notebook cell. Restart the kernel after changing Python code.
 
