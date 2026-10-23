@@ -17,6 +17,9 @@ authors = [
   { name="Augustyn Majtyka"},
   { name="Roman Gicała"},
   { name="Rafał Przypek"},
+  { name="Artsiom Tkach"},
+  { name="Zakhar Tsvirka"},
+  { name="Roman Volochai"},
 ]
 description = "Graph editor for Jupyter"
 readme = "README.md"
