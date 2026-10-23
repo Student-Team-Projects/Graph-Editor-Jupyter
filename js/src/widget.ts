@@ -23,6 +23,7 @@ import {
   type Click,
   type Selection,
 } from "./interaction";
+import { forgetPageOffset } from "./pageOffset";
 import { graphStyle, type Colors } from "./style";
 import "./widget.css";
 
@@ -152,6 +153,12 @@ class GraphEditor {
     // Not passive: Ctrl+wheel must not zoom the whole browser page.
     this.container.addEventListener("wheel", (e) => this.onWheel(e), { signal, passive: false });
     this.container.addEventListener("mouseleave", () => this.movePointer(null, null), { signal });
+    // Keep Cytoscape's idea of where the canvas is on the page fresh (see pageOffset.ts).
+    // Scroll events don't bubble, so listen in the capture phase to hear every scroller.
+    const forget = () => forgetPageOffset(this.cy);
+    document.addEventListener("scroll", forget, { signal, capture: true, passive: true });
+    this.container.addEventListener("pointerenter", forget, { signal });
+    this.container.addEventListener("pointerdown", forget, { signal, capture: true });
     this.bindGraphEvents();
 
     const onModelChange = () => this.loadFromModel();
