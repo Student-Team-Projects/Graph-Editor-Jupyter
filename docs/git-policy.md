@@ -77,7 +77,7 @@ git push -u origin fix/planarity-check
 
 ## Never commit
 
-`.venv/`, `.idea/`, `node_modules/`, build output, scratch notebooks (`Untitled*.ipynb`), secrets.
+`.venv/`, `.idea/`, `node_modules/`, build output, scratch notebooks (`Untitled*.ipynb`), notebook outputs (clear `main.ipynb` outputs before committing), secrets.
 
 ## Line endings
 

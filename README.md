@@ -13,7 +13,14 @@ from graph_editor_jupyter import edit
 edit(nx.dodecahedral_graph())
 ```
 
-Planar graphs are drawn without edge crossings.
+Planar graphs are drawn without edge crossings; other graphs with as few crossings as the search can find (it reaches the known minimum for K5, K3,3, the Petersen graph and other classic examples).
+
+- **Click empty space**: add a vertex. **Click two vertices**: add an edge.
+- **Drag** a vertex to move it. **Double-click** (or select and press Delete) to remove.
+- **Force: off / on**: freeze the layout, or let physics push vertices apart (and off edges).
+- **− / + / Fit**: zoom. Drag empty space to pan.
+
+Every edit changes the NetworkX graph you passed in.
 
 ### Development
 

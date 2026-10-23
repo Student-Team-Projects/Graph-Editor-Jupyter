@@ -28,6 +28,16 @@ The existing code is a mess with many bugs and mistakes. He named the planarity 
 - **The whole team agrees to use TypeScript** for the UI, with Python for the core.
 - **Scope:** only the three required behaviours above. Directed and weighted graphs are optional extras, to consider only if they turn out to be quick. Focus on the UI first.
 
+## Labels (decided 2026-10-23)
+
+Needed in the new version:
+- **Show labels:** attribute values of vertices and edges are displayed next to vertices and on edges.
+- **Edit labels:** click a vertex or edge and edit its attributes in a side panel.
+- **Colors:** a vertex `color` attribute colors the vertex.
+- **Show/hide toggle** for labels.
+
+API: only `edit(graph)` is required. Compatibility with the old `edit(graph, color_dict)` is not needed.
+
 ## Deadline
 
 2027-01-21, the last day of the course. A working solution must be ready by then. Meeting dates are in [schedule](schedule.md).

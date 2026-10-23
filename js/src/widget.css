@@ -2,33 +2,77 @@
 .graph-editor {
   --ge-bg: var(--jp-layout-color0, #ffffff);
   --ge-ink: var(--jp-ui-font-color0, #1a1a1a);
+  --ge-muted: var(--jp-ui-font-color2, #757575);
   --ge-border: var(--jp-border-color1, #cccccc);
+  --ge-accent: var(--jp-brand-color1, #1976d2);
+  --ge-accent-soft: var(--jp-brand-color3, #bbdefb);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font: 13px system-ui, sans-serif;
+}
+
+.graph-editor .ge-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  /* Clicking Undo fast is a double-click, which would select the button's word. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.graph-editor .ge-button {
+  font: inherit;
+  padding: 4px 12px;
+  color: var(--ge-ink);
+  background: var(--ge-bg);
+  border: 1px solid var(--ge-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.graph-editor .ge-button[aria-pressed="true"] {
+  color: var(--ge-bg);
+  background: var(--ge-accent);
+  border-color: var(--ge-accent);
+}
+
+.graph-editor .ge-help {
+  color: var(--ge-muted);
 }
 
 .graph-editor .ge-canvas {
-  display: block;
+  position: relative;
   max-width: 100%;
   background: var(--ge-bg);
   border: 1px solid var(--ge-border);
   border-radius: 4px;
+  outline: none;
 }
 
-.graph-editor .ge-edges line {
-  stroke: var(--ge-ink);
-  stroke-width: 2;
+.graph-editor .ge-canvas:focus-visible {
+  border-color: var(--ge-accent);
 }
 
-.graph-editor .ge-node circle {
-  fill: var(--ge-bg);
-  stroke: var(--ge-ink);
-  stroke-width: 2;
+.graph-editor .ge-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-.graph-editor .ge-node text {
-  fill: var(--ge-ink);
-  font: 600 13px system-ui, sans-serif;
-  text-anchor: middle;
-  dominant-baseline: central;
+/* Edge preview, drawn over Cytoscape's canvases; never catches the mouse. */
+.graph-editor .ge-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
   pointer-events: none;
-  user-select: none;
+  overflow: visible;
+}
+
+.graph-editor .ge-preview line {
+  stroke: var(--ge-accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
 }
