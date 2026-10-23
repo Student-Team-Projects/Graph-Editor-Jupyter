@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clickVertex, HELP, hint, keyAction, wheelZoomFactor, type Selection } from "./interaction";
+import {
+  clickVertex,
+  HELP,
+  hint,
+  isRepeatClick,
+  keyAction,
+  REPEAT_CLICK_MS,
+  wheelZoomFactor,
+  type Selection,
+} from "./interaction";
 
 const noEdges = () => false;
 const key = (k: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean } = {}) => ({
@@ -32,6 +41,16 @@ test("a double click is two clicks and removes nothing", () => {
   assert.deepEqual(once.addEdge, [1, 2]);
   assert.deepEqual(twice, { selection: null });
   assert.ok(!HELP.toLowerCase().includes("double"));
+});
+
+// Regression: adding a vertex waited 250 ms for Cytoscape's double-click check. Clicks are
+// now handled at once, so the second click of a double click must not add another vertex.
+test("second click of a double click is ignored, later or distant clicks are not", () => {
+  const add = { x: 100, y: 100, time: 1000 };
+  assert.ok(isRepeatClick(add, { x: 103, y: 101, time: 1200 }));
+  assert.ok(!isRepeatClick(add, { x: 103, y: 101, time: 1000 + REPEAT_CLICK_MS + 1 }));
+  assert.ok(!isRepeatClick(add, { x: 160, y: 100, time: 1100 }));
+  assert.ok(!isRepeatClick(null, add));
 });
 
 test("undo and redo shortcuts, also with Cmd", () => {

@@ -14,7 +14,15 @@ import {
   type Link,
   type Vertex,
 } from "./forces";
-import { clickVertex, hint, keyAction, wheelZoomFactor, type Selection } from "./interaction";
+import {
+  clickVertex,
+  hint,
+  isRepeatClick,
+  keyAction,
+  wheelZoomFactor,
+  type Click,
+  type Selection,
+} from "./interaction";
 import { graphStyle, type Colors } from "./style";
 import "./widget.css";
 
@@ -83,6 +91,7 @@ class GraphEditor {
   private hovered: number | null = null; // vertex under the pointer
   private dragging = false;
   private moveRecorded = false;
+  private lastAdd: Click | null = null; // the click that last added a vertex
   private structureKey = "";
 
   constructor(private readonly model: AnyModel<Model>, el: HTMLElement, signal: AbortSignal) {
@@ -402,6 +411,7 @@ class GraphEditor {
     const cy = this.cy;
     cy.on("tap", "node", (e) => {
       this.container.focus();
+      if (this.isRepeatOfAdd(e)) return;
       this.onClickVertex(idOfNode(e.target.id()));
     });
     cy.on("tap", "edge", (e) => {
@@ -411,15 +421,17 @@ class GraphEditor {
       const selected = s?.kind === "edge" && edgeId(s.u, s.v) === edgeId(u, v);
       this.select(selected ? null : { kind: "edge", u, v });
     });
-    // `onetap` fires only when the tap is not part of a double tap, so double-clicking
-    // empty space doesn't add a vertex. Double-click removes nothing (research/06).
-    cy.on("onetap", (e) => {
+    // Plain `tap`, not `onetap`: that one waits 250 ms to rule out a double click, which made
+    // new vertices appear late. Double-click removes nothing (research/06).
+    cy.on("tap", (e) => {
       if (e.target !== cy) return;
       this.container.focus();
+      if (this.isRepeatOfAdd(e)) return;
       if (this.selection) {
         this.select(null);
       } else {
         const [x, y] = this.toModel(e.position.x, e.position.y);
+        this.lastAdd = { ...e.renderedPosition, time: e.timeStamp };
         this.edit({ type: "add_node", x, y });
       }
     });
@@ -471,6 +483,12 @@ class GraphEditor {
         this.sendPositions();
       }
     });
+  }
+
+  private isRepeatOfAdd(e: EventObject): boolean {
+    const repeat = isRepeatClick(this.lastAdd, { ...e.renderedPosition, time: e.timeStamp });
+    if (repeat) this.lastAdd = null;
+    return repeat;
   }
 
   private onClickVertex(id: number): void {

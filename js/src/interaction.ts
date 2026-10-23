@@ -29,6 +29,24 @@ export function clickVertex(
   return { selection: next };
 }
 
+// A click that adds a vertex reacts at once (Cytoscape's `onetap` waits 250 ms to rule out a
+// double click). The second click of a double click is then ignored, so it doesn't add a
+// second vertex on top of the first or select the new one.
+export const REPEAT_CLICK_MS = 300;
+export const REPEAT_CLICK_PX = 8;
+
+export interface Click {
+  x: number;
+  y: number;
+  time: number; // ms
+}
+
+export function isRepeatClick(previous: Click | null, click: Click): boolean {
+  if (!previous) return false;
+  const near = Math.hypot(click.x - previous.x, click.y - previous.y) <= REPEAT_CLICK_PX;
+  return near && click.time - previous.time <= REPEAT_CLICK_MS;
+}
+
 export type KeyAction = "undo" | "redo" | "remove" | "deselect" | null;
 
 interface Key {
