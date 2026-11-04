@@ -1,5 +1,6 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+# Node.js comes from pip so that installing needs only Python; hatch_build.py uses it.
+requires = ["hatchling>=1.27", "nodejs-wheel-binaries>=20,<25"]
 build-backend = "hatchling.build"
 
 [project]
@@ -39,7 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["jupyterlab", "pytest"]
+dev = ["hatchling>=1.27", "jupyterlab", "pytest"]
 
 [project.urls]
 Homepage = "https://github.com/Student-Team-Projects/Graph-Editor-Jupyter"
@@ -47,8 +48,10 @@ Issues = "https://github.com/Student-Team-Projects/Graph-Editor-Jupyter/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/graph_editor_jupyter"]
-# Built by `npm run build` in js/; ignored by git but shipped in the package.
+# Built by hatch_build.py; ignored by git but shipped in the package.
 artifacts = ["src/graph_editor_jupyter/static/*"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
