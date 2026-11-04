@@ -75,6 +75,12 @@ export function easeInOut(t: number): number {
   return c < 0.5 ? 2 * c * c : 1 - (-2 * c + 2) ** 2 / 2;
 }
 
+// How much to scale the drawing area so all of it fits the canvas. The canvas gets narrower than
+// the area in a small window (or on a projector), but vertices keep their coordinates.
+export function canvasScale(canvasWidth: number, areaWidth: number): number {
+  return Math.min(1, canvasWidth / areaWidth);
+}
+
 const LINE_HEIGHT = 16; // pixels per wheel "line" (deltaMode 1)
 
 // Zoom factor for one wheel event; a pinch on a touchpad sends many small ones.
