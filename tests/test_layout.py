@@ -2,6 +2,7 @@ import networkx as nx
 import numpy as np
 import pytest
 
+from graph_editor_jupyter import layout as layout_module
 from graph_editor_jupyter.layout import (
     DEFAULT_SIZE,
     _CrossingSearch,
@@ -122,7 +123,10 @@ CROSSING_NUMBERS = {
 
 
 @pytest.mark.parametrize("name", CROSSING_NUMBERS)
-def test_non_planar_layout_reaches_the_crossing_number(name):
+def test_non_planar_layout_reaches_the_crossing_number(name, monkeypatch):
+    # Regression: the search stops on a time budget, so on a slower setup Heawood got 4 crossings
+    # and this test failed. It checks what the search can reach, not how fast the machine is.
+    monkeypatch.setattr(layout_module, "SEARCH_SECONDS", layout_module.SEARCH_SECONDS * 4)
     graph, minimum = CROSSING_NUMBERS[name]
     pos = initial_layout(graph)
     assert count_crossings(graph, pos) == minimum

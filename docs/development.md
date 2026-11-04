@@ -26,19 +26,25 @@ Python sends the graph to the browser as lists in `GraphWidget` traits (`nodes`,
 
 ## One-time setup
 
-You need **Python 3.10+** and **Node.js 18+**.
+You need only **Python 3.10+**. `python run.py` creates `.venv`, installs everything into it and opens the demo. To do the same by hand:
 
 ```
 python -m venv .venv
 # activate it (Windows: .venv\Scripts\activate, Linux/macOS: source .venv/bin/activate)
 pip install -e ".[dev]"
+```
 
+`pip install -e` makes Python use the source code directly, so Python changes apply after restarting the notebook kernel.
+
+The front end bundle isn't in git. `hatch_build.py` builds it during every install if it is missing or out of date, using a Node.js that pip downloads for the build only (`nodejs-wheel-binaries`, in `[build-system]` in `pyproject.toml`).
+
+To work on the TypeScript you do need **Node.js 18+**, for fast rebuilds and for the tests:
+
+```
 cd js
 npm install
 npm run build
 ```
-
-`pip install -e` makes Python use the source code directly, so Python changes apply after restarting the notebook kernel.
 
 ## Everyday commands
 
@@ -95,6 +101,7 @@ Not done yet: labels (showing, editing, colors), see requirements.md.
 Checked 2026-10-23. The project is MIT. `LICENSE` names the original authors (the 2024 `pygraphedit` team, github.com/EndRay/graph-editor) and the contributors; everyone is listed in `pyproject.toml`. Until then it held the placeholder owner from the Python packaging tutorial.
 
 - **Dependencies** are all permissive (MIT, ISC, BSD, Apache-2.0, PSF). Don't add GPL or proprietary ones: GPL would force its licence on our code. Check the licence before adding a package.
+- **Build-time only:** `nodejs-wheel-binaries` (MIT) brings Node.js to the build. It isn't installed with the package and nothing from it is shipped.
 - **Bundled code:** `widget.js` contains Cytoscape.js (MIT) and d3-force (ISC), whose licences require their notices in every copy. `npm run build` writes them to `static/THIRD_PARTY_LICENSES.txt`, shipped in the package; a test checks it.
 - **Researched code:** take ideas and algorithms (not protected by copyright in the EU, Directive 2009/24/EC), never copy code from sources we only studied.
 - **EU rules:** as free, non-commercial open source we are outside the Cyber Resilience Act; the editor collects no personal data (GDPR).
