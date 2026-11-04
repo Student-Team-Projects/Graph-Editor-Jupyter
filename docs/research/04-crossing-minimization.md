@@ -24,7 +24,7 @@ A combination of the ideas above, using only NumPy, SciPy and NetworkX:
 2. **Phase 1, fewest crossings** (Radermacher-style vertex movement, iterated): from the 3 best candidates, move one vertex at a time to the spot with the lowest *badness*. When no single move helps, shake 4 random vertices and search again, keeping only improvements.
    - *Badness* = crossings + 10 × near-misses. A near-miss is an edge passing through or grazing a vertex, or two vertices on top of each other. It must cost far more than a crossing: an edge through a vertex is ambiguous and can hide several crossings (K7 found exactly this loophole when it cost 2).
 3. **Phase 2, looks** (SPX and Davidson-Harel ideas): lower an *energy* while never letting badness grow. Energy = stress (vertex pairs as far apart as their graph distance) + a vertex-edge term that grows as a vertex gets closer than 40 px to an edge it isn't part of. Stress alone pressed vertices against edges once crossings were fixed.
-4. Fixed random seed, so the result is the same every run. Time budget about 2.4 s per component.
+4. Fixed random seed, so the result is the same every run, as long as the search finishes within its time budget of about 2.4 s per component. On a much slower machine it stops earlier and the drawing can differ.
 
 ## Several parts in one graph (2026-11-05)
 

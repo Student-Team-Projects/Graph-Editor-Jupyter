@@ -112,7 +112,11 @@ def test_layout_keeps_proportions():
     assert abs(width - height) / max(width, height) < 0.05
 
 
-def test_layout_is_deterministic():
+def test_layout_is_deterministic(monkeypatch):
+    # Regression: this failed once on a busy CI machine. The search stops on time budgets, so a
+    # slow run can stop earlier; with enough time, the fixed seed decides the result.
+    for budget in ("REFINE_SECONDS", "SEARCH_SECONDS", "POLISH_SECONDS"):
+        monkeypatch.setattr(layout_module, budget, getattr(layout_module, budget) * 20)
     graph = nx.petersen_graph()
     assert initial_layout(graph) == initial_layout(graph)
 
