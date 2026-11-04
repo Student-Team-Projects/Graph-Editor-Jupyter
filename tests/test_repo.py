@@ -1,5 +1,9 @@
 import json
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 
@@ -29,3 +33,28 @@ def test_licence_names_the_real_authors():
     licence = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert "Python Packaging Authority" not in licence
     assert "Andrii Kovryhin" in licence and "contributors" in licence
+
+
+def test_npm_test_lists_test_files_itself():
+    # Regression: `node --test .test/` failed on Node 22+ ("Cannot find module .test"), which
+    # no longer accepts a directory, so every TypeScript test looked like one failure.
+    scripts = json.loads((ROOT / "js" / "package.json").read_text(encoding="utf-8"))["scripts"]
+    assert "node --test" not in scripts["test"]
+    assert "node scripts/run-tests.mjs .test" in scripts["test"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
+@pytest.mark.parametrize("body, status", [("assert.ok(true)", 0), ("assert.ok(false)", 1)])
+def test_test_runner_reports_the_result(tmp_path, body, status):
+    (tmp_path / "a.test.mjs").write_text(
+        f'import test from "node:test";\nimport assert from "node:assert";\ntest("a", () => {body});\n'
+    )
+    runner = ROOT / "js" / "scripts" / "run-tests.mjs"
+    result = subprocess.run(["node", runner, tmp_path], capture_output=True, text=True)
+    assert result.returncode == status, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
+def test_test_runner_fails_without_tests(tmp_path):
+    runner = ROOT / "js" / "scripts" / "run-tests.mjs"
+    assert subprocess.run(["node", runner, tmp_path], capture_output=True).returncode == 1
