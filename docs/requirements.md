@@ -18,6 +18,17 @@ A graph representation tool for Jupyter: you give it a graph, and it shows it in
    - If the graph is **planar**, draw it with **no edge crossings**.
    - If it is **not planar**, draw it with **as few crossings as possible**.
 
+## Layout priority (decided 2026-11-05)
+
+Following the professor's requirement for the first layout:
+
+1. **Fewest crossings first.** Planar graphs always get 0. Non-planar graphs get as few as the search can find.
+2. **Looks only after that,** and never at the cost of an extra crossing.
+
+This also holds when a graph has several separate parts: fitting them on the canvas must not add crossings.
+
+**Open:** should we keep crossings first, or later focus on a better view from the start? Decide this with the team and the professor. Until then the order above applies. If it changes, update this section with the date and the reason (see `AGENTS.md`).
+
 ## Professor's view of the current code
 
 The existing code is a mess with many bugs and mistakes. He named the planarity checker as incorrect (confirmed, see [the assessment](research/01-current-code-assessment.md)). He said dealing with this seems like the first thing to do.

@@ -29,4 +29,11 @@ Read these files first, every session:
 - Every mistake found, including during review, gets a regression test that would have caught it.
 - Run `pytest` and, for TypeScript changes, `npm run typecheck` and `npm test` in `js/` before every commit. Never commit with failing tests.
 - If a decision is not covered by the docs, ask the user instead of guessing.
-- When the team decides something new, update the matching file in `docs/`.
+
+## Keep the docs up to date
+
+**IMPORTANT: `docs/`, including `docs/research/`, must always match what the project does and what the team has decided.**
+
+- Every decision is written in the matching file in `docs/`, with its date and reason, in the same pull request or commit as the change. If it is not written down, it is not finished.
+- If a decision changes, update the docs in place and say what changed and why. For example, if we ever decide to focus on looks first and only then on fewer crossings, that decision MUST replace the priority in `docs/requirements.md`.
+- If code and docs disagree, tell the user instead of quietly following one of them.
