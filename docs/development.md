@@ -86,6 +86,8 @@ Done: package skeleton, widget draws the graph, correct planarity check, crossin
 
 **How the first layout is chosen** (`layout.py`): each connected component gets several candidate layouts (tidy tree layout for trees, Tutte embedding for 3-connected planar graphs, Kamada-Kawai, spring layout with several seeds, NetworkX planar layout). For planar graphs, candidates containing crossings are discarded before ranking: zero crossings is mandatory even in a small component slot. The remaining candidates are ranked by crossings plus near-miss penalties, with ties broken by the most space between vertices. If the winner is crossing-free but cramped, a force step spreads it out, rejecting any move that would add a crossing.
 
+Connected components go side by side or in rows. The number of rows is measured in units of the largest component, so a big graph with a few small ones keeps its full height, while many similar components get a grid of about square slots. A row is as high as its largest component needs.
+
 Layout uses graph topology and ignores edge `weight` attributes, including in the large-graph fallback. Negative or nonnumeric weights therefore cannot prevent a graph from opening; the original attributes are preserved.
 
 Grabbing a vertex cancels any running Arrange or history animation at the current positions. In frozen mode, the vertex then stays where it is dropped; the cancelled animation cannot move it again after release.

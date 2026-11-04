@@ -306,3 +306,41 @@ def test_high_degree_candidate_scoring_bounds_broadcasts(method, monkeypatch):
     values = getattr(search, method)(p, 0, spots)
     assert values.shape == (len(spots),)
     assert np.isfinite(values).all()
+
+
+def _closest_pixels(pos, size=DEFAULT_SIZE):
+    points = np.array(list(pos.values())) * size
+    distances = np.linalg.norm(points[:, None] - points[None], axis=-1)
+    np.fill_diagonal(distances, np.inf)
+    return distances.min()
+
+
+@pytest.mark.parametrize("extra", [1, 3, 4, 8])
+def test_small_components_do_not_squeeze_a_large_one(extra):
+    # Regression: click empty space a few times, press Arrange: with 4 components the graph was
+    # squeezed into the top half of the canvas, with vertices overlapping.
+    graph = nx.dodecahedral_graph()
+    alone = initial_layout(graph)
+    graph.add_nodes_from(range(100, 100 + extra))
+    pos = initial_layout(graph)
+    main = np.array([pos[v] for v in alone]) * DEFAULT_SIZE
+    height = main[:, 1].max() - main[:, 1].min()
+    assert height >= 0.75 * DEFAULT_SIZE[1]
+    assert count_crossings(graph, pos) == 0
+    assert _closest_pixels(pos) >= 30
+
+
+@pytest.mark.parametrize("count", [4, 5, 6, 9])
+def test_vertices_of_neighbouring_rows_do_not_touch(count):
+    # Regression: the 18 px gap between rows was smaller than a vertex (32 px).
+    pos = initial_layout(nx.disjoint_union_all(nx.cycle_graph(3) for _ in range(count)))
+    assert _closest_pixels(pos) >= 36
+
+
+def test_a_large_component_gets_a_taller_row():
+    graph = nx.disjoint_union_all([nx.dodecahedral_graph()] + [nx.empty_graph(1) for _ in range(30)])
+    pos = initial_layout(graph)
+    main = np.array([pos[v] for v in range(20)]) * DEFAULT_SIZE
+    assert main[:, 1].max() - main[:, 1].min() >= 0.4 * DEFAULT_SIZE[1]
+    assert _closest_pixels(pos) >= 15
+    assert all(0 <= x <= 1 and 0 <= y <= 1 for x, y in pos.values())

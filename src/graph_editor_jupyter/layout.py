@@ -563,6 +563,41 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
     return best
 
 
+def _gap(parts: int, length: int) -> float:
+    """Share of an axis between neighbouring slots: room for a vertex, at most 20% in total."""
+    return min(max(0.04, MIN_VERTEX_GAP / length), 0.2 / parts)
+
+
+def _narrowest_slot(sizes: list[int], rows: int, width: int) -> float:
+    """Smallest distance in pixels between the centres of neighbouring slots in a row."""
+    columns = math.ceil(len(sizes) / rows)
+    gap = _gap(columns, width)
+    narrowest = math.inf
+    for start in range(0, len(sizes), columns):
+        group = sizes[start:start + columns]
+        usable = 1 - gap * (len(group) - 1)
+        narrowest = min(narrowest, (usable * group[-1] / sum(group) + gap) * width)
+    return narrowest
+
+
+def _row_count(sizes: list[int], size: tuple[int, int]) -> int:
+    """Rows for components of these sizes, largest first."""
+    count = len(sizes)
+    if count <= 3:
+        return 1
+    # Measured in units of the largest component, so a big graph with a few small ones keeps its
+    # full height, while many similar components get a grid of about square slots.
+    rows = math.ceil(math.sqrt(sum(sizes) / sizes[0] * size[1] / size[0]))
+    # More rows if vertices in a row would touch, unless rows then get too low for vertices too.
+    while (
+        rows < count
+        and _narrowest_slot(sizes, rows, size[0]) < MIN_VERTEX_GAP
+        and size[1] / (rows + 1) >= MIN_VERTEX_GAP
+    ):
+        rows += 1
+    return min(rows, count)
+
+
 def initial_layout(graph: nx.Graph, seed: int = 0, size: tuple[int, int] = DEFAULT_SIZE) -> dict[object, Point]:
     """Positions in [0, 1] x [0, 1]. Planar graphs get a crossing-free layout.
 
@@ -572,19 +607,19 @@ def initial_layout(graph: nx.Graph, seed: int = 0, size: tuple[int, int] = DEFAU
     if not components:
         return {}
     count = len(components)
-    # Keep small graphs side by side; otherwise aim for square slots in pixels.
-    columns = count if count <= 3 else min(count - 1, max(1, math.ceil(math.sqrt(count * size[0] / size[1]))))
-    rows = math.ceil(count / columns)
-    # Reserve at most 20% of either axis for gaps, even with many components.
-    gap_x, gap_y = min(0.04, 0.2 / columns), min(0.04, 0.2 / rows)
-    height = (1 - gap_y * (rows - 1)) / rows
+    rows = _row_count([len(c) for c in components], size)
+    columns = math.ceil(count / rows)
+    groups = [components[start:start + columns] for start in range(0, count, columns)]
+    gap_x, gap_y = _gap(columns, size[0]), _gap(len(groups), size[1])
+    # A row is as high as its largest component needs, so small ones don't take space from a big one.
+    weights = [math.sqrt(len(group[0])) for group in groups]
+    scale = (1 - gap_y * (len(groups) - 1)) / sum(weights)
     pos = {}
-    for row in range(rows):
-        group = components[row * columns:(row + 1) * columns]
+    top = 0.0
+    for row, group in enumerate(groups):
+        bottom = 1.0 if row == len(groups) - 1 else top + scale * weights[row]
         total = sum(len(c) for c in group)
         usable = 1 - gap_x * (len(group) - 1)
-        top = row * (height + gap_y)
-        bottom = 1.0 if row == rows - 1 else top + height
         left = 0.0
         for column, component in enumerate(group):
             # Pin the last boundary to 1 to avoid accumulated rounding overflow.
@@ -595,4 +630,5 @@ def initial_layout(graph: nx.Graph, seed: int = 0, size: tuple[int, int] = DEFAU
             for v, (x, y) in sub.items():
                 pos[v] = (left + x * width, top + y * row_height)
             left = right + gap_x
+        top = bottom + gap_y
     return pos
