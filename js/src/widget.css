@@ -40,6 +40,8 @@
 
 .graph-editor .ge-help {
   color: var(--ge-muted);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .graph-editor .ge-canvas {

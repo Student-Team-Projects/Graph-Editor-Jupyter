@@ -43,3 +43,11 @@ test("a narrow canvas keeps its shape and its border", () => {
   const css = readFileSync("src/widget.css", "utf8");
   assert.match(css, /max-width: calc\(100% - 2px\)/);
 });
+
+// Regression: the hint sat in the toolbar, so when its length changed on selection the toolbar
+// resized and the whole canvas jumped under the pointer.
+test("the hint is below the canvas, so its length can't move it", () => {
+  const widget = readFileSync("src/widget.ts", "utf8");
+  assert.match(widget, /el\.append\(toolbar, this\.container, this\.help\)/);
+  assert.doesNotMatch(widget, /toolbar\.append\([^)]*this\.help/);
+});

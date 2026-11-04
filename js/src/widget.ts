@@ -110,11 +110,12 @@ class GraphEditor {
     const zoomIn = button("+", "Zoom in");
     const fit = button("Fit", "Show the whole graph");
     this.help.className = "ge-help";
-    toolbar.append(this.forceButton, this.arrangeButton, this.undoButton, this.redoButton, zoomOut, zoomIn, fit, this.help);
+    toolbar.append(this.forceButton, this.arrangeButton, this.undoButton, this.redoButton, zoomOut, zoomIn, fit);
 
     this.container.className = "ge-canvas";
     this.container.tabIndex = 0;
-    el.append(toolbar, this.container);
+    // The hint goes below the canvas: its length changes on selection and must not move the canvas.
+    el.append(toolbar, this.container, this.help);
     this.sizeContainer();
 
     this.cy = cytoscape({
