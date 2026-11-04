@@ -94,6 +94,8 @@ Grabbing a vertex cancels any running Arrange or history animation at the curren
 
 **Non-planar graphs** (`_CrossingSearch`): two phases. First the fewest crossings (vertex movement with random shakes, from the best candidates including a planarization candidate), then better looks (stress plus a vertex-edge distance term) without adding crossings. Details, sources and results: [research/04-crossing-minimization.md](research/04-crossing-minimization.md).
 
+Non-planar components are searched on a canvas of at least the default size and then shrunk into their slot, because fewest crossings come first (see requirements.md) and shrinking a drawing doesn't change its crossing count. Searching directly in a small slot missed better drawings (#14).
+
 The non-planar candidate pool includes both the crossing-free layout of a large planar subgraph and that subgraph's other candidate layouts. All are scored against the full graph, so enforcing planarity on the subgraph does not remove useful starting points for the non-planar search.
 
 Candidate positions are scored in adaptive batches based on vertex degree and graph size. Both crossing/near-miss scores and geometry energy use batching, so a high-degree vertex cannot allocate arrays for the whole search grid at once.
