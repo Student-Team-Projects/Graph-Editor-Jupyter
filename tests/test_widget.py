@@ -233,6 +233,45 @@ def test_undo_from_python():
     assert graph.has_edge(0, 1)
 
 
+@pytest.mark.parametrize("first_step", ["undo", "redo"])
+def test_python_history_syncs_external_nodes(first_step):
+    graph = nx.path_graph(2)
+    widget = GraphWidget(graph)
+    send(widget, type="remove_edge", u=0, v=1)
+    if first_step == "redo":
+        widget.undo()
+    graph.add_node("external", color="red")
+    graph.add_edge(0, "external", weight="label")
+    other_step = "redo" if first_step == "undo" else "undo"
+
+    getattr(widget, first_step)()
+    assert "external" not in graph
+    getattr(widget, other_step)()
+
+    assert widget.graph is graph
+    assert graph.nodes["external"] == {"color": "red"}
+    assert graph.edges[0, "external"] == {"weight": "label"}
+    node_id = ids(widget)["external"]
+    assert widget._node_of[node_id] == "external"
+    assert str(node_id) in widget.positions
+    assert [ids(widget)["0"], node_id] in widget.edges
+    getattr(widget, first_step)()
+    getattr(widget, other_step)()
+    assert ids(widget)["external"] == node_id
+
+
+def test_snapshot_syncs_external_graph_changes():
+    graph = nx.path_graph(2)
+    widget = GraphWidget(graph)
+    graph.remove_node(1)
+    graph.add_node("external")
+    snapshot = widget._snapshot()
+    assert set(snapshot.node_of.values()) == set(graph)
+    assert str(widget._id_of["external"]) in snapshot.positions
+    widget._restore(snapshot)
+    assert set(ids(widget)) == {"0", "external"}
+
+
 def test_malformed_positions_are_ignored():
     widget = GraphWidget(nx.path_graph(2))
     send(widget, type="add_node", x=0, y=0, positions={"junk": [0, 0], "0": [0.3, 0.3]})

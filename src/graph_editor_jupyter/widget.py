@@ -110,6 +110,7 @@ class GraphWidget(anywidget.AnyWidget):
     # ---- undo ----
 
     def _snapshot(self, positions=None) -> _Snapshot:
+        self._sync_from_graph()
         return _Snapshot(
             nodes=[(n, dict(d)) for n, d in self.graph.nodes(data=True)],
             edges=[(u, v, dict(d)) for u, v, d in self.graph.edges(data=True)],
@@ -130,6 +131,8 @@ class GraphWidget(anywidget.AnyWidget):
         self.send({"type": "set_positions", "positions": self.positions})
 
     def _step(self, source: list, target: list, positions=None) -> None:
+        # Python undo/redo bypass _on_msg, so catch up with external graph edits too.
+        self._sync_from_graph()
         if not source:
             return
         target.append(self._snapshot(positions))

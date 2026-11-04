@@ -21,12 +21,12 @@ import {
   hint,
   isRepeatClick,
   keyAction,
-  MOVE_MS,
   wheelZoomFactor,
   type Click,
   type Selection,
 } from "./interaction";
 import { forgetPageOffset } from "./pageOffset";
+import { Glide } from "./glide";
 import { graphStyle, type Colors } from "./style";
 import "./widget.css";
 
@@ -76,7 +76,7 @@ function themeColors(el: HTMLElement): Colors {
   };
 }
 
-class GraphEditor {
+export class GraphEditor {
   private vertices = new Map<number, Vertex>();
   private links: Link[] = []; // edges between two different vertices
   private selection: Selection = null;
@@ -88,7 +88,7 @@ class GraphEditor {
   private readonly undoButton = button("Undo", "Undo (Ctrl+Z)");
   private readonly redoButton = button("Redo", "Redo (Ctrl+Y)");
   private readonly arrangeButton = button("Arrange", "Redraw the graph with as few edge crossings as possible");
-  private animation = 0; // requestAnimationFrame id of the running glide
+  private readonly glide = new Glide();
   private readonly help = document.createElement("span");
   // Dashed line from the selected vertex to the pointer: the edge the next click would add.
   private readonly preview = document.createElementNS(SVG_NS, "svg");
@@ -146,7 +146,7 @@ class GraphEditor {
       .on("tick", () => this.onTick())
       .on("end", () => this.sendPositions());
     signal.addEventListener("abort", () => this.simulation.stop());
-    signal.addEventListener("abort", () => cancelAnimationFrame(this.animation));
+    signal.addEventListener("abort", () => this.glide.cancel());
 
     this.forceButton.addEventListener("click", () => this.setForce(!this.force), { signal });
     this.arrangeButton.addEventListener("click", () => this.arrange(), { signal });
@@ -318,6 +318,7 @@ class GraphEditor {
 
   // Edits go to Python with the positions on screen, so undo restores exactly those.
   private edit(msg: Record<string, unknown>): void {
+    if (msg.type === "undo" || msg.type === "redo") this.glide.finish();
     this.model.send({ ...msg, positions: this.currentPositions() });
   }
 
@@ -342,12 +343,9 @@ class GraphEditor {
       const [x1, y1] = this.toScreen(p);
       moves.push({ v, x0: v.x ?? 0, y0: v.y ?? 0, x1, y1 });
     }
-    cancelAnimationFrame(this.animation);
     this.simulation.stop();
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    const start = performance.now();
-    const step = (now: number) => {
-      const t = reduceMotion ? 1 : (now - start) / MOVE_MS;
+    this.glide.start((t) => {
       const k = easeInOut(t);
       for (const { v, x0, y0, x1, y1 } of moves) {
         if (this.cy.getElementById(nodeId(v.id)).grabbed()) continue;
@@ -355,10 +353,7 @@ class GraphEditor {
         v.y = y0 + (y1 - y0) * k;
       }
       this.updatePositions();
-      if (t < 1) this.animation = requestAnimationFrame(step);
-      else this.finishGlide(m.settle ?? false);
-    };
-    this.animation = requestAnimationFrame(step);
+    }, () => this.finishGlide(m.settle ?? false), reduceMotion);
   }
 
   private finishGlide(settle: boolean): void {
@@ -509,6 +504,8 @@ class GraphEditor {
     cy.on("viewport", () => this.updatePreview());
 
     cy.on("grab", "node", () => {
+      // A manual drag takes over from Arrange/Undo; never resume its old trajectory.
+      if (this.glide.cancel()) this.finishGlide(false);
       this.dragging = true;
       this.moveRecorded = false;
       this.updatePreview();

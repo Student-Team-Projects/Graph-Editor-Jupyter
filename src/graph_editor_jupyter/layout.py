@@ -27,6 +27,7 @@ REFINE_SECONDS = 1.0  # time budget for refining one component
 SEARCH_SECONDS = 1.6  # time budget for the crossing phase of one component
 POLISH_SECONDS = 0.8  # time budget for the stress phase
 SEARCH_GRID = (32, 20)  # candidate spots per axis when moving a vertex
+SCORING_BATCH_ELEMENTS = 1_000_000  # target broadcast elements per batch (at least one spot)
 MIN_VERTEX_GAP = 36.0  # pixels kept between vertex centres (two radii plus a little)
 MIN_EDGE_GAP = 18.0  # pixels kept between a vertex and an edge it isn't part of
 # A near-miss (edge through or grazing a vertex, vertices on top of each other) is ambiguous:
@@ -187,10 +188,11 @@ def _candidates(graph: nx.Graph, seed: int, size: tuple[int, int]) -> list[dict]
     if graph.number_of_nodes() >= 4 and is_planar(graph) and nx.node_connectivity(graph) >= 3:
         candidates.append(tutte_layout(graph))
     small = graph.number_of_nodes() <= MAX_NODES_FOR_ALL_CANDIDATES
+    # Layout uses topology only: edge attributes may contain negative or nonnumeric weights.
     if small:
-        candidates.append(nx.kamada_kawai_layout(graph))
+        candidates.append(nx.kamada_kawai_layout(graph, weight=None))
     for offset in SPRING_SEEDS if small else [0]:
-        candidates.append(nx.spring_layout(graph, seed=seed + offset))
+        candidates.append(nx.spring_layout(graph, seed=seed + offset, weight=None))
     if is_planar(graph):
         candidates.append(nx.planar_layout(graph))
     def as_floats(c: dict) -> dict:
@@ -255,7 +257,7 @@ def _planar_subgraph(graph: nx.Graph) -> nx.Graph:
     that keeps it planar. The first step of the planarization method."""
     sub = nx.Graph()
     sub.add_nodes_from(graph.nodes)
-    sub.add_edges_from(nx.minimum_spanning_edges(graph, data=False))
+    sub.add_edges_from(nx.minimum_spanning_edges(graph, weight=None, data=False))
     for u, v in graph.edges:
         if u == v or sub.has_edge(u, v):
             continue
@@ -351,8 +353,22 @@ class _CrossingSearch:
         crowding = ((CLEARANCE_GOAL / np.maximum(gaps, 1.0)) ** 2)[~own].sum()
         return float(stress + crowding)
 
+    def _spot_batch_size(self, i: int) -> int:
+        # Largest broadcasts are spots x degree x edges (crossings) and
+        # spots x degree x vertices (near-misses and energy).
+        per_spot = max(1, len(self.neighbours[i])) * max(1, len(self.edges), len(self.nodes))
+        return max(1, SCORING_BATCH_ELEMENTS // per_spot)
+
     def spot_energy(self, p: np.ndarray, i: int, spots: np.ndarray) -> np.ndarray:
-        """The terms of energy() that involve vertex i, if it were at each spot."""
+        """The terms of energy() involving vertex i, evaluated in memory-bounded batches."""
+        result = np.empty(len(spots))
+        batch_size = self._spot_batch_size(i)
+        for start in range(0, len(spots), batch_size):
+            end = start + batch_size
+            result[start:end] = self._spot_energy_batch(p, i, spots[start:end])
+        return result
+
+    def _spot_energy_batch(self, p: np.ndarray, i: int, spots: np.ndarray) -> np.ndarray:
         dist = np.linalg.norm(spots[:, None] - p[None], axis=-1)  # (spots, all vertices)
         result = (self.weight[i][None] * (dist - self.target[i][None]) ** 2).sum(axis=1) / self.unit**2
         if not len(self.edges):
@@ -382,7 +398,15 @@ class _CrossingSearch:
         return crossings + NEAR_MISS_COST * near
 
     def spot_terms(self, p: np.ndarray, i: int, spots: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Crossings and near-misses involving vertex i if it were at each spot."""
+        """Crossings and near-misses at each spot, evaluated in memory-bounded batches."""
+        crossings, near = np.empty(len(spots)), np.empty(len(spots))
+        batch_size = self._spot_batch_size(i)
+        for start in range(0, len(spots), batch_size):
+            end = start + batch_size
+            crossings[start:end], near[start:end] = self._spot_terms_batch(p, i, spots[start:end])
+        return crossings, near
+
+    def _spot_terms_batch(self, p: np.ndarray, i: int, spots: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         nbrs = self.neighbours[i]
         edges = self.edges
         w = p[nbrs]
@@ -504,14 +528,23 @@ class _CrossingSearch:
 def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict:
     if graph.number_of_nodes() == 1:
         return {next(iter(graph.nodes)): (0.5, 0.5)}
+    planar = is_planar(graph)
     if graph.number_of_edges() > MAX_EDGES_FOR_SEARCH:
-        pos = nx.planar_layout(graph) if is_planar(graph) else nx.spring_layout(graph, seed=seed)
+        pos = nx.planar_layout(graph) if planar else nx.spring_layout(graph, seed=seed, weight=None)
         return _normalize({v: (float(x), float(y)) for v, (x, y) in pos.items()}, size)
 
     candidates = _candidates(graph, seed, size)
-    if not is_planar(graph):
+    if planar:
+        # Planarity is mandatory, even when a crossing layout has fewer near-misses.
+        # _candidates always includes NetworkX's crossing-free planar layout.
+        candidates = [pos for pos in candidates if count_crossings(graph, pos) == 0]
+    else:
         # Planarization: draw a large planar part without crossings, then add the rest.
-        candidates.append(_layout_component(_planar_subgraph(graph), seed, size))
+        subgraph = _planar_subgraph(graph)
+        candidates.append(_layout_component(subgraph, seed, size))
+        # A crossing layout of that part may still be a better start for the full,
+        # non-planar graph. Rank its alternatives against the full graph too.
+        candidates.extend(_candidates(subgraph, seed, size))
 
     # Fewest crossings and near-misses first, then the most space between vertices.
     scored = [
@@ -520,7 +553,7 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
     ]
     scored.sort(key=lambda item: item[:3], reverse=True)
     neg_badness, space, _, best = scored[0]
-    if not is_planar(graph) and neg_badness < 0:
+    if not planar and neg_badness < 0:
         starts = [pos for *_, pos in scored[:SEARCH_STARTS]]
         best = _CrossingSearch(graph, size, seed).run(starts, time.monotonic() + SEARCH_SECONDS, POLISH_SECONDS)
     elif count_crossings(graph, best) == 0 and space < GOOD_CLEARANCE:
@@ -533,21 +566,33 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
 def initial_layout(graph: nx.Graph, seed: int = 0, size: tuple[int, int] = DEFAULT_SIZE) -> dict[object, Point]:
     """Positions in [0, 1] x [0, 1]. Planar graphs get a crossing-free layout.
 
-    Connected components are laid out separately and placed side by side.
+    Connected components are laid out separately, using multiple rows when needed.
     """
     components = sorted(nx.connected_components(graph), key=len, reverse=True)
     if not components:
         return {}
-    # Give each component a horizontal slot proportional to its size.
-    total = sum(len(c) for c in components)
-    gap = 0.04
-    usable = 1 - gap * (len(components) - 1)
+    count = len(components)
+    # Keep small graphs side by side; otherwise aim for square slots in pixels.
+    columns = count if count <= 3 else min(count - 1, max(1, math.ceil(math.sqrt(count * size[0] / size[1]))))
+    rows = math.ceil(count / columns)
+    # Reserve at most 20% of either axis for gaps, even with many components.
+    gap_x, gap_y = min(0.04, 0.2 / columns), min(0.04, 0.2 / rows)
+    height = (1 - gap_y * (rows - 1)) / rows
     pos = {}
-    left = 0.0
-    for component in components:
-        width = usable * len(component) / total
-        sub = _layout_component(graph.subgraph(component), seed, (max(1, int(size[0] * width)), size[1]))
-        for v, (x, y) in sub.items():
-            pos[v] = (left + x * width, y)
-        left += width + gap
+    for row in range(rows):
+        group = components[row * columns:(row + 1) * columns]
+        total = sum(len(c) for c in group)
+        usable = 1 - gap_x * (len(group) - 1)
+        top = row * (height + gap_y)
+        bottom = 1.0 if row == rows - 1 else top + height
+        left = 0.0
+        for column, component in enumerate(group):
+            # Pin the last boundary to 1 to avoid accumulated rounding overflow.
+            right = 1.0 if column == len(group) - 1 else left + usable * len(component) / total
+            width, row_height = right - left, bottom - top
+            sub_size = (max(1, int(size[0] * width)), max(1, int(size[1] * row_height)))
+            sub = _layout_component(graph.subgraph(component), seed, sub_size)
+            for v, (x, y) in sub.items():
+                pos[v] = (left + x * width, top + y * row_height)
+            left = right + gap_x
     return pos
