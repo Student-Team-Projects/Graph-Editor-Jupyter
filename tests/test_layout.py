@@ -5,6 +5,7 @@ import pytest
 from graph_editor_jupyter import layout as layout_module
 from graph_editor_jupyter.layout import (
     DEFAULT_SIZE,
+    MIN_VERTEX_GAP,
     _CrossingSearch,
     _candidates,
     _planar_subgraph,
@@ -335,6 +336,22 @@ def test_vertices_of_neighbouring_rows_do_not_touch(count):
     # Regression: the 18 px gap between rows was smaller than a vertex (32 px).
     pos = initial_layout(nx.disjoint_union_all(nx.cycle_graph(3) for _ in range(count)))
     assert _closest_pixels(pos) >= 36
+
+
+@pytest.mark.parametrize(
+    "component, count",
+    [(nx.complete_graph(5), 10), (nx.complete_graph(5), 20), (nx.cycle_graph(6), 12), (nx.path_graph(2), 40)],
+)
+def test_vertices_of_different_components_do_not_overlap(component, count):
+    # Regression: with 3 or more rows the gap was capped at 0.2 / rows of the height (31 px for
+    # 3 rows, 23 px for 4), less than a vertex (32 px), so vertices of neighbouring slots overlapped.
+    graph = nx.disjoint_union_all([component] * count)
+    pos = initial_layout(graph)
+    of = {v: i for i, c in enumerate(nx.connected_components(graph)) for v in c}
+    points = np.array([pos[v] for v in graph]) * DEFAULT_SIZE
+    labels = np.array([of[v] for v in graph])
+    distances = np.linalg.norm(points[:, None] - points[None], axis=-1)
+    assert distances[labels[:, None] != labels[None]].min() >= MIN_VERTEX_GAP
 
 
 def test_a_large_component_gets_a_taller_row():

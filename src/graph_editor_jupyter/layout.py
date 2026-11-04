@@ -30,6 +30,7 @@ SEARCH_GRID = (32, 20)  # candidate spots per axis when moving a vertex
 SCORING_BATCH_ELEMENTS = 1_000_000  # target broadcast elements per batch (at least one spot)
 MIN_VERTEX_GAP = 36.0  # pixels kept between vertex centres (two radii plus a little)
 MIN_EDGE_GAP = 18.0  # pixels kept between a vertex and an edge it isn't part of
+MAX_GAP_SHARE = 0.3  # most of an axis the gaps between component slots may take together
 # A near-miss (edge through or grazing a vertex, vertices on top of each other) is ambiguous:
 # you can't tell if the edge ends at the vertex. It can also hide several crossings, so it
 # must cost far more than one crossing, or the search trades real crossings for hidden ones.
@@ -564,8 +565,16 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
 
 
 def _gap(parts: int, length: int) -> float:
-    """Share of an axis between neighbouring slots: room for a vertex, at most 20% in total."""
-    return min(max(0.04, MIN_VERTEX_GAP / length), 0.2 / parts)
+    """Share of an axis between neighbouring slots.
+
+    Vertices sit on the slot edges, so a gap below MIN_VERTEX_GAP makes vertices of neighbouring
+    slots overlap. The gap keeps that much while the parts - 1 gaps take at most 30% of the axis;
+    beyond that there is no room, they share 30%, and force mode pushes the vertices apart.
+    """
+    wanted = max(0.04, MIN_VERTEX_GAP / length)
+    if parts < 2 or wanted * (parts - 1) <= MAX_GAP_SHARE:
+        return wanted
+    return MAX_GAP_SHARE / (parts - 1)
 
 
 def _narrowest_slot(sizes: list[int], rows: int, width: int) -> float:
