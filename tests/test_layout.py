@@ -8,6 +8,7 @@ from graph_editor_jupyter.layout import (
     MIN_VERTEX_GAP,
     _CrossingSearch,
     _candidates,
+    _layout_component,
     _planar_subgraph,
     badness,
     clearance,
@@ -361,3 +362,36 @@ def test_a_large_component_gets_a_taller_row():
     assert main[:, 1].max() - main[:, 1].min() >= 0.4 * DEFAULT_SIZE[1]
     assert _closest_pixels(pos) >= 15
     assert all(0 <= x <= 1 and 0 <= y <= 1 for x, y in pos.values())
+
+
+@pytest.mark.parametrize("slot", [(160, 133), (100, 80)])
+def test_small_slot_keeps_the_fewest_crossings(slot):
+    # Regression (#14): searching directly in a small slot gave K5 3 crossings instead of 1.
+    graph = nx.complete_graph(5)
+    assert count_crossings(graph, _layout_component(graph, 0, slot)) == 1
+
+
+@pytest.mark.parametrize("component, count, minimum", [
+    (nx.complete_graph(5), 10, 10),
+    (nx.complete_graph(5), 20, 20),
+    (nx.complete_bipartite_graph(3, 3), 12, 12),
+])
+def test_several_non_planar_parts_keep_the_fewest_crossings(component, count, minimum, monkeypatch):
+    # Regression (#14): 10 x K5 got 26 crossings. Fitting parts on the canvas must not add any.
+    monkeypatch.setattr(layout_module, "SEARCH_SECONDS", layout_module.SEARCH_SECONDS * 4)
+    graph = nx.disjoint_union_all([component] * count)
+    assert count_crossings(graph, initial_layout(graph)) == minimum
+
+
+@pytest.mark.parametrize("parts", [
+    [nx.cycle_graph(3)] * 4,
+    [nx.dodecahedral_graph()] * 4,
+    [nx.grid_2d_graph(3, 3)] * 12,
+    [nx.balanced_tree(2, 3), nx.wheel_graph(9), nx.cubical_graph(), nx.path_graph(2), nx.empty_graph(1)],
+    [nx.dodecahedral_graph()] + [nx.empty_graph(1)] * 30,
+])
+@pytest.mark.parametrize("size", [DEFAULT_SIZE, (300, 200)])
+def test_planar_graphs_with_several_parts_have_no_crossings(parts, size):
+    # A hard requirement from the professor: no packing of the parts may break it.
+    graph = nx.disjoint_union_all([nx.convert_node_labels_to_integers(p) for p in parts])
+    assert count_crossings(graph, initial_layout(graph, size=size)) == 0

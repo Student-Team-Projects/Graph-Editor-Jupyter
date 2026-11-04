@@ -26,6 +26,12 @@ A combination of the ideas above, using only NumPy, SciPy and NetworkX:
 3. **Phase 2, looks** (SPX and Davidson-Harel ideas): lower an *energy* while never letting badness grow. Energy = stress (vertex pairs as far apart as their graph distance) + a vertex-edge term that grows as a vertex gets closer than 40 px to an edge it isn't part of. Stress alone pressed vertices against edges once crossings were fixed.
 4. Fixed random seed, so the result is the same every run. Time budget about 2.4 s per component.
 
+## Several parts in one graph (2026-11-05)
+
+Each connected component gets its own slot on the canvas. Searching directly in a small slot found worse drawings: K5 got 3 crossings in a 160 x 133 px slot, though a 1-crossing drawing shrunk into that slot has no near-misses and scores better. We did not find out why the search misses it. So non-planar components are now searched on a canvas of at least the default size and shrunk into the slot, which keeps the crossing count. Planar components stay searched in their slot, because shrinking them lowered the spacing (dodecahedron + 8 single vertices: 33 px to 21 px).
+
+Results: 10 x K5 went from 26 to 10 crossings and 20 x K5 from 60 to 20, both the minimum. **Open:** K8 gets 24 crossings even alone (the minimum for straight lines is 19), so the search itself misses it at this time budget.
+
 ## Results (tests in `tests/test_layout.py`)
 
 Known minimum crossings, reached for seeds 0, 1 and 2, with no near-misses:

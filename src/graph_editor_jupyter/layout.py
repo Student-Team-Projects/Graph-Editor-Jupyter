@@ -534,6 +534,11 @@ def _layout_component(graph: nx.Graph, seed: int, size: tuple[int, int]) -> dict
         pos = nx.planar_layout(graph) if planar else nx.spring_layout(graph, seed=seed, weight=None)
         return _normalize({v: (float(x), float(y)) for v, (x, y) in pos.items()}, size)
 
+    if not planar:
+        # Fewest crossings come first (docs/requirements.md). In a small slot the search misses
+        # drawings with fewer crossings, and shrinking a finished drawing doesn't change its count.
+        size = (max(size[0], DEFAULT_SIZE[0]), max(size[1], DEFAULT_SIZE[1]))
+
     candidates = _candidates(graph, seed, size)
     if planar:
         # Planarity is mandatory, even when a crossing layout has fewer near-misses.
