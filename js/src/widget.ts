@@ -15,6 +15,7 @@ import {
   type Vertex,
 } from "./forces";
 import {
+  canvasScale,
   clickVertex,
   easeInOut,
   hint,
@@ -98,6 +99,7 @@ class GraphEditor {
   private moveRecorded = false;
   private lastAdd: Click | null = null; // the click that last added a vertex
   private structureKey = "";
+  private scale = 1; // see scaleToCanvas
 
   constructor(private readonly model: AnyModel<Model>, el: HTMLElement, signal: AbortSignal) {
     el.classList.add("graph-editor");
@@ -130,6 +132,7 @@ class GraphEditor {
     const observer = new ResizeObserver(() => {
       this.cy.resize();
       this.cy.style(graphStyle(themeColors(el)));
+      this.scaleToCanvas();
     });
     observer.observe(this.container);
     signal.addEventListener("abort", () => observer.disconnect());
@@ -198,7 +201,20 @@ class GraphEditor {
 
   private sizeContainer(): void {
     this.container.style.width = `${this.w}px`;
-    this.container.style.height = `${this.h}px`;
+    // Not a fixed height: a narrower canvas must stay the same shape as the drawing area.
+    this.container.style.aspectRatio = `${this.w} / ${this.h}`;
+  }
+
+  // Keeps the whole drawing area visible when the canvas is narrow. Acts only when the scale
+  // really changes: Jupyter also reports size 0 and back when a cell scrolls out of view, and
+  // that must not undo the user's zoom.
+  private scaleToCanvas(): void {
+    const width = this.container.clientWidth;
+    if (width === 0) return;
+    const scale = canvasScale(width, this.w);
+    if (scale === this.scale) return;
+    this.scale = scale;
+    this.cy.viewport({ zoom: scale, pan: { x: 0, y: 0 } });
   }
 
   private toScreen([x, y]: [number, number]): [number, number] {

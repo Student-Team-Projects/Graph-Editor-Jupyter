@@ -33,3 +33,13 @@ test("toolbar text can't be selected by fast clicks", () => {
   assert.match(toolbar[1], /(^|[^-])user-select: none/);
   assert.match(toolbar[1], /-webkit-user-select: none/); // Safari
 });
+
+// Regression: with a fixed height a narrow canvas showed empty strips, and clicks there landed
+// outside the drawing area. And the 100% width pushed the right border out of the notebook.
+test("a narrow canvas keeps its shape and its border", () => {
+  const source = readFileSync("src/widget.ts", "utf8");
+  assert.match(source, /style\.aspectRatio/);
+  assert.doesNotMatch(source, /container\.style\.height/);
+  const css = readFileSync("src/widget.css", "utf8");
+  assert.match(css, /max-width: calc\(100% - 2px\)/);
+});

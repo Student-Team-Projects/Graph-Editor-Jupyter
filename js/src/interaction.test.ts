@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  canvasScale,
   clickVertex,
   easeInOut,
   HELP,
@@ -92,4 +93,16 @@ test("wheel zoom: up zooms in, down zooms out, big jumps are limited", () => {
   assert.equal(wheelZoomFactor(0, 0), 1);
   assert.equal(wheelZoomFactor(10_000, 0), wheelZoomFactor(100, 0));
   assert.equal(wheelZoomFactor(3, 1), wheelZoomFactor(48, 0)); // line mode
+});
+
+// Regression: the drawing area is always 800 wide, so in a 1024 px window (or on a projector) the
+// right side of the graph was cut off, and force could push vertices out of sight.
+test("a narrow canvas shows the whole drawing area", () => {
+  assert.equal(canvasScale(400, 800), 0.5);
+  assert.equal(800 * canvasScale(592, 800), 592);
+});
+
+test("a wide canvas keeps the normal size", () => {
+  assert.equal(canvasScale(800, 800), 1);
+  assert.equal(canvasScale(1200, 800), 1);
 });

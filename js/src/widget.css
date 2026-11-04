@@ -44,7 +44,7 @@
 
 .graph-editor .ge-canvas {
   position: relative;
-  max-width: 100%;
+  max-width: calc(100% - 2px); /* room for the border, which would otherwise be cut off */
   background: var(--ge-bg);
   border: 1px solid var(--ge-border);
   border-radius: 4px;
