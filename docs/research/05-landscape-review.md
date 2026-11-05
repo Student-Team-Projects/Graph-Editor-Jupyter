@@ -59,7 +59,7 @@ Issue found by testing: a vertex can be dropped onto an edge (vertex 4 on edge 3
 |---|---|
 | Jupyter integration | Keep anywidget and our Python `GraphWidget` |
 | First layout | Keep ours (no usable library) |
-| Physics | Keep our d3-force gentle mode, add PrEd-style vertex-edge repulsion |
+| Physics | Keep our d3-force gentle mode, add PrEd-style vertex-edge repulsion (2026-11-05: the gentle mode is replaced by a full PrEd layout, see [research/07](07-force-mode-feel.md)) |
 | Drawing, labels, zoom/pan, styling | **Switch to Cytoscape.js** before building labels, instead of writing labels, edge labels, zoom/pan and styling ourselves |
 | Editing gestures | Keep our click-click and double-click behaviour, implemented on Cytoscape events |
 | Attribute editing | Side panel in the widget |

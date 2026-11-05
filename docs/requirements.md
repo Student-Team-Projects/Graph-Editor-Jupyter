@@ -36,8 +36,12 @@ Said at the meeting on 2026-11-05, written down by Roman Volochai. The goal is t
 1. **Vertices resist being pushed close together.** Bringing a vertex near others takes effort; they move out of the way and keep a clear gap.
 2. **Dragging a vertex across an edge is harder.** An edge resists a vertex passing through it, instead of letting it slide over as if the edge were not there.
 3. In general, the physics keeps the drawing readable: no vertex resting on top of another vertex or an edge.
+4. **Dragging a vertex far pulls the graph along**, as CS Academy does (added by Roman Volochai the same day, after trying both editors).
+5. **Force mode keeps making the drawing tidier**, little by little, like Arrange: evenly spread, but keeping the drawing's topology (its crossings), using the canvas instead of shrinking into its middle, and keeping a tree drawn top-down in levels as the first layout draws it. After a vertex is pulled far away and dropped, the rest of the graph comes closer to it (added by Roman Volochai the same day).
 
-Today's force mode is deliberately gentle (see [research/03](research/03-existing-editors.md)) and does neither 1 nor 2 well enough. What CS Academy does, measurements of our forces and the plan: [research/07-force-mode-feel.md](research/07-force-mode-feel.md).
+Items 4 and 5 change "Force mode on/off" under Required behaviour: vertices pushed away by a drag no longer spring back to their old spots, they settle wherever the layout puts them. The first layout's crossings are kept: 0 for planar graphs.
+
+Force mode was deliberately gentle (see [research/03](research/03-existing-editors.md)) and did neither 1 nor 2 well enough. What CS Academy does, measurements of our forces, the plan and what was done: [research/07-force-mode-feel.md](research/07-force-mode-feel.md).
 
 ## Professor's view of the current code
 

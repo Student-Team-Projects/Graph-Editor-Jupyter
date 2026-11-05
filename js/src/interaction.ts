@@ -81,6 +81,16 @@ export function canvasScale(canvasWidth: number, areaWidth: number): number {
   return Math.min(1, canvasWidth / areaWidth);
 }
 
+// The pan that puts the middle of these points (their bounding box) in the middle of a view
+// `width` x `height` pixels big at this zoom. After Arrange the view moves there, keeping the zoom,
+// so the redrawn graph is in front of the user wherever they had scrolled or zoomed to.
+export function centredPan(points: [number, number][], zoom: number, width: number, height: number): { x: number; y: number } {
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const middle = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+  return { x: width / 2 - middle[0] * zoom, y: height / 2 - middle[1] * zoom };
+}
+
 const LINE_HEIGHT = 16; // pixels per wheel "line" (deltaMode 1)
 
 // Zoom factor for one wheel event; a pinch on a touchpad sends many small ones.
