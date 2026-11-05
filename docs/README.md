@@ -14,7 +14,7 @@ Shared notes for the team (and for our AI assistants). Read these before startin
 | [research/04-crossing-minimization.md](research/04-crossing-minimization.md) | How non-planar graphs get few crossings and still look good, with sources. |
 | [research/05-landscape-review.md](research/05-landscape-review.md) | Build or adopt: existing widgets and libraries for every part of the project. |
 | [research/06-interaction-review.md](research/06-interaction-review.md) | Our gestures checked against usability guidelines and user complaints; why undo exists and double-click no longer deletes. |
-| [research/07-force-mode-feel.md](research/07-force-mode-feel.md) | Force mode that resists crowding and edge crossing (professor, 2026-11-05): CS Academy observed, our forces measured, plan. |
+| [research/07-force-mode-feel.md](research/07-force-mode-feel.md) | Force mode that feels like CS Academy's (professor, 2026-11-05): CS Academy measured, every round of changes with the reasons, and what force mode does now. |
 
 ## Using these docs with an AI assistant
 

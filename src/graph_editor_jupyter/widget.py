@@ -26,7 +26,9 @@ class GraphWidget(anywidget.AnyWidget):
     """Jupyter widget editing a NetworkX graph in place. The front end is in js/src/widget.ts.
 
     Vertices get stable integer ids for the front end, because NetworkX nodes can be any
-    hashable object. Positions are normalized to [0, 1] and owned by the front end once shown.
+    hashable object. Positions are normalized to [0, 1] across the canvas and owned by the front
+    end once shown; a vertex dragged past the canvas in a zoomed-out view gets coordinates outside
+    that range.
 
     The editor's Arrange button redraws the current graph with the first-layout algorithm
     (arrange() does the same from Python). Edits from the editor can be undone (undo/redo, also Ctrl+Z/Ctrl+Y in the editor). Undo

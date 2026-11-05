@@ -2,20 +2,29 @@ import type { AnyModel, RenderProps } from "@anywidget/types";
 import cytoscape, { type Core, type EventObject, type NodeSingular } from "cytoscape";
 import { edgeId, idOfNode, nodeId, toElements, type ModelNode } from "./elements";
 import {
+  BORDER_GAP,
   captureRestState,
   createSimulation,
-  homeDistance,
+  DROP_ALPHA,
+  endDrag,
+  moveDrag,
   NODE_RADIUS,
   radiusForLabel,
   refreshForces,
-  rehome,
+  releaseDropped,
+  keepInside,
+  setBounds,
   START_ALPHA,
+  startDrag,
+  tidied,
+  type Bounds,
   type GraphSimulation,
   type Link,
   type Vertex,
 } from "./forces";
 import {
   canvasScale,
+  centredPan,
   clickVertex,
   easeInOut,
   hint,
@@ -100,6 +109,7 @@ export class GraphEditor {
   private lastAdd: Click | null = null; // the click that last added a vertex
   private structureKey = "";
   private scale = 1; // see scaleToCanvas
+  private room: Bounds | undefined; // see updateRoom
 
   constructor(private readonly model: AnyModel<Model>, el: HTMLElement, signal: AbortSignal) {
     el.classList.add("graph-editor");
@@ -144,7 +154,10 @@ export class GraphEditor {
 
     this.simulation = createSimulation()
       .on("tick", () => this.onTick())
-      .on("end", () => this.sendPositions());
+      .on("end", () => {
+        releaseDropped([...this.vertices.values()]);
+        this.sendPositions();
+      });
     signal.addEventListener("abort", () => this.simulation.stop());
     signal.addEventListener("abort", () => this.glide.cancel());
 
@@ -186,8 +199,9 @@ export class GraphEditor {
     signal.addEventListener("abort", () => model.off("msg:custom", onMessage));
     this.updateHistoryButtons();
     this.loadFromModel();
-    // Force starts on (team decision 2026-10-23); it is gentle, so the first layout survives.
-    this.setForce(true);
+    // Force starts on (team decision 2026-10-23), with the drawing already tidied: showing the
+    // first layout and then moving every vertex looked like a jump.
+    this.setForce(true, true);
   }
 
   // ---- coordinates ----
@@ -226,9 +240,54 @@ export class GraphEditor {
     return [(x - PADDING) / (this.w - 2 * PADDING), (y - PADDING) / (this.h - 2 * PADDING)];
   }
 
+  // Where a dragged vertex may go: the canvas, and when the view is zoomed out or panned past it,
+  // all of the visible area too. Before, vertices stayed in the canvas rectangle even when zoomed
+  // out, so the graph couldn't be moved into the space around it (the user, 2026-11-05).
+  private dragBounds(): Bounds {
+    const canvas = { left: 0, top: 0, right: this.w, bottom: this.h };
+    if (!this.cy?.extent || !this.container?.clientWidth) return canvas;
+    const seen = this.cy.extent();
+    if (![seen.x1, seen.y1, seen.x2, seen.y2].every(Number.isFinite)) return canvas;
+    return {
+      left: Math.min(canvas.left, seen.x1),
+      top: Math.min(canvas.top, seen.y1),
+      right: Math.max(canvas.right, seen.x2),
+      bottom: Math.max(canvas.bottom, seen.y2),
+    };
+  }
+
+  // Where physics keeps vertices: the canvas, grown to take in every vertex where it is now (with
+  // room for the push off the border). It is worked out again only when vertices are put somewhere
+  // (dragged, loaded, arranged), never when the view moves: following the view, the border pushed
+  // the graph along when the user scrolled or zoomed (the user, 2026-11-05).
+  // `dragged`: only grow the room to take in this vertex. Worked out from every vertex during a
+  // drag, the room grew by the border margin each time the pointer moved, wherever physics had
+  // pushed a vertex against it, and the graph could walk off past the canvas (the user, 2026-11-05).
+  private updateRoom(dragged?: Vertex): void {
+    const canvas = { left: 0, top: 0, right: this.w, bottom: this.h };
+    const room = dragged ? { ...(this.room ?? canvas) } : canvas;
+    for (const v of dragged ? [dragged] : this.vertices.values()) {
+      const [x, y] = [v.x ?? 0, v.y ?? 0];
+      // Only vertices sticking out of the canvas grow the room: one near its edge (the first
+      // layout puts vertices 20 px from it) let the graph go 12 px past the canvas.
+      if (x - v.r >= 0 && y - v.r >= 0 && x + v.r <= this.w && y + v.r <= this.h) continue;
+      const margin = v.r + BORDER_GAP;
+      room.left = Math.min(room.left, (v.x ?? 0) - margin);
+      room.top = Math.min(room.top, (v.y ?? 0) - margin);
+      room.right = Math.max(room.right, (v.x ?? 0) + margin);
+      room.bottom = Math.max(room.bottom, (v.y ?? 0) + margin);
+    }
+    this.room = room;
+    setBounds(this.simulation, room);
+  }
+
   private clamp(v: Vertex): void {
-    v.x = Math.min(Math.max(v.x ?? 0, v.r), this.w - v.r);
-    v.y = Math.min(Math.max(v.y ?? 0, v.r), this.h - v.r);
+    keepInside(v, this.room ?? { left: 0, top: 0, right: this.w, bottom: this.h });
+  }
+
+  private captureRestState(): void {
+    this.updateRoom();
+    captureRestState(this.simulation, [...this.vertices.values()], this.links, { width: this.w, height: this.h }, this.room);
   }
 
   // Zooms around a point in rendered coordinates, the canvas centre by default.
@@ -244,7 +303,6 @@ export class GraphEditor {
   // current position; Python's positions are used only for new ones.
   private loadFromModel(): void {
     const positions = this.model.get("positions");
-    const oldRest = new Map(this.links.map((l) => [edgeId(l.source.id, l.target.id), l.rest]));
     const next = new Map<number, Vertex>();
     for (const { id, label } of this.model.get("nodes")) {
       const old = this.vertices.get(id);
@@ -255,20 +313,16 @@ export class GraphEditor {
         next.set(id, old);
       } else {
         const [x, y] = this.toScreen(positions[String(id)] ?? [0.5, 0.5]);
-        next.set(id, { id, label, r, x, y, homeX: x, homeY: y });
+        next.set(id, { id, label, r, x, y });
       }
     }
     this.vertices = next;
-    for (const v of next.values()) this.clamp(v);
+    this.updateRoom(); // positions from Python may be past the canvas: don't push them back
 
     const edges = this.model.get("edges").filter(([u, v]) => next.has(u) && next.has(v));
     this.links = edges
       .filter(([u, v]) => u !== v)
-      .map(([u, v]) => {
-        const source = next.get(u)!;
-        const target = next.get(v)!;
-        return { source, target, rest: oldRest.get(edgeId(u, v)) ?? homeDistance(source, target) };
-      });
+      .map(([u, v]) => ({ source: next.get(u)!, target: next.get(v)! }));
 
     if (this.selection?.kind === "vertex" && !next.has(this.selection.id)) this.selection = null;
     const s = this.selection;
@@ -329,8 +383,8 @@ export class GraphEditor {
     this.edit({ type: "arrange" });
   }
 
-  // After Arrange, undo or redo, vertices glide to the spots Python sent, which become their
-  // homes. After Arrange (`settle`), force mode then tidies up as when the editor opens.
+  // After Arrange, undo or redo, vertices glide to the spots Python sent. After Arrange
+  // (`settle`), force mode then tidies up as when the editor opens.
   private onCustomMessage(msg: unknown): void {
     const m = msg as { type?: string; positions?: Record<string, [number, number]>; settle?: boolean };
     if (m.type !== "set_positions" || !m.positions) return;
@@ -344,7 +398,25 @@ export class GraphEditor {
       moves.push({ v, x0: v.x ?? 0, y0: v.y ?? 0, x1, y1 });
     }
     this.simulation.stop();
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    // After Arrange in force mode, glide straight to where force mode would tidy the new layout,
+    // instead of to the layout itself with force mode moving everything again afterwards.
+    const tidy = this.force && (m.settle ?? false);
+    if (tidy) {
+      for (const move of moves) [move.v.x, move.v.y] = [move.x1, move.y1];
+      this.captureRestState();
+      const ends = tidied(this.simulation, [...this.vertices.values()], this.links);
+      for (const move of moves) {
+        [move.v.x, move.v.y] = [move.x0, move.y0];
+        [move.x1, move.y1] = ends.get(move.v) ?? [move.x1, move.y1];
+      }
+    }
+    // After Arrange the view also glides, keeping its zoom, so the redrawn graph ends up in the
+    // middle of what the user sees (the user, 2026-11-05).
+    const pan0 = this.cy.pan();
+    const pan1 = m.settle && moves.length > 0
+      ? centredPan(moves.map(({ x1, y1 }) => [x1, y1]), this.cy.zoom(), this.cy.width(), this.cy.height())
+      : pan0;
+    const reduceMotion = globalThis.window?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     this.glide.start((t) => {
       const k = easeInOut(t);
       for (const { v, x0, y0, x1, y1 } of moves) {
@@ -352,19 +424,30 @@ export class GraphEditor {
         v.x = x0 + (x1 - x0) * k;
         v.y = y0 + (y1 - y0) * k;
       }
+      if (pan1 !== pan0) this.cy.pan({ x: pan0.x + (pan1.x - pan0.x) * k, y: pan0.y + (pan1.y - pan0.y) * k });
       this.updatePositions();
-    }, () => this.finishGlide(m.settle ?? false), reduceMotion);
+    }, () => this.finishGlide(tidy), reduceMotion);
   }
 
-  private finishGlide(settle: boolean): void {
+  // `tidied`: the vertices glided to a drawing force mode has already tidied (after Arrange), so
+  // its edge length stays and physics has nothing left to do.
+  private finishGlide(tidied: boolean): void {
     for (const v of this.vertices.values()) {
       v.vx = 0;
       v.vy = 0;
-      this.clamp(v);
     }
-    captureRestState(this.simulation, [...this.vertices.values()], this.links);
+    this.updateRoom(); // Undo may bring vertices back from past the canvas
+    if (!tidied) this.captureRestState();
+    else this.coolDown();
     this.updatePositions();
-    if (this.force && settle) this.simulation.alpha(START_ALPHA).restart();
+    if (tidied) this.sendPositions();
+  }
+
+  // After the drawing was tidied at once, the simulation is as if it had run and cooled down. It
+  // never ran, so it was still at d3's starting alpha of 1, and the first grab moved the whole
+  // graph up to 88 px while the vertex was held still.
+  private coolDown(): void {
+    this.simulation.alpha(0);
   }
 
   private updateHistoryButtons(): void {
@@ -432,16 +515,24 @@ export class GraphEditor {
 
   // ---- modes ----
 
-  private setForce(on: boolean): void {
+  // `atOnce`: tidy the drawing right away instead of letting it drift there (when the editor opens).
+  private setForce(on: boolean, atOnce = false): void {
     this.force = on;
     this.forceButton.textContent = on ? "Force: on" : "Force: off";
     this.forceButton.setAttribute("aria-pressed", String(on));
-    if (on) {
-      captureRestState(this.simulation, [...this.vertices.values()], this.links);
+    if (on && atOnce) {
+      this.captureRestState();
+      for (const [v, [x, y]] of tidied(this.simulation, [...this.vertices.values()], this.links)) [v.x, v.y] = [x, y];
+      this.coolDown();
+      this.updatePositions();
+      this.sendPositions();
+    } else if (on) {
+      this.captureRestState();
       this.simulation.alpha(START_ALPHA).restart();
     } else {
       // Freezing keeps every vertex exactly where it is now.
       this.simulation.stop();
+      releaseDropped([...this.vertices.values()]);
       for (const v of this.vertices.values()) {
         v.vx = 0;
         v.vy = 0;
@@ -503,10 +594,12 @@ export class GraphEditor {
     });
     cy.on("viewport", () => this.updatePreview());
 
-    cy.on("grab", "node", () => {
+    cy.on("grab", "node", (e?: EventObject) => {
       // A manual drag takes over from Arrange/Undo; never resume its old trajectory.
       if (this.glide.cancel()) this.finishGlide(false);
       this.dragging = true;
+      const vertex = e ? this.vertices.get(idOfNode(e.target.id())) : undefined;
+      if (this.force && vertex) startDrag(vertex, [...this.vertices.values()]);
       this.moveRecorded = false;
       this.updatePreview();
       if (this.force) this.simulation.alphaTarget(0.3).restart();
@@ -523,25 +616,20 @@ export class GraphEditor {
       const p = node.position();
       vertex.x = p.x;
       vertex.y = p.y;
-      this.clamp(vertex);
+      keepInside(vertex, this.dragBounds());
       if (vertex.x !== p.x || vertex.y !== p.y) node.position({ x: vertex.x!, y: vertex.y! });
-      if (this.force) {
-        // Pinned under the pointer; neighbours react through the simulation.
-        vertex.fx = vertex.x;
-        vertex.fy = vertex.y;
-      }
+      this.updateRoom(vertex); // the graph may follow it out there
+      // Force mode: held under the pointer; vertices and edges around react through the physics.
+      if (this.force) moveDrag(vertex, vertex.x!, vertex.y!);
     });
     cy.on("free", "node", (e) => {
       this.dragging = false;
       const vertex = this.vertices.get(idOfNode(e.target.id()));
       if (!vertex) return;
       if (this.force) {
-        // Released vertices rejoin the simulation with the drop spot as their new home;
-        // the vertices pushed aside spring back to theirs.
-        vertex.fx = null;
-        vertex.fy = null;
-        rehome(this.simulation, vertex, [...this.vertices.values()], this.links);
-        this.simulation.alphaTarget(0);
+        // The vertex stays where it was dropped while the graph comes after it and settles.
+        endDrag(vertex);
+        this.simulation.alphaTarget(0).alpha(DROP_ALPHA).restart();
       } else {
         this.sendPositions();
       }

@@ -33,11 +33,12 @@ Date: 2026-10-23. Purpose: copy the conventions users already know, so our edito
 ## Decided (2026-10-23)
 
 - **Frozen mode:** the dragged vertex follows the pointer, edges follow, nothing else moves. It stays where dropped.
-- **Force mode is gentle** (changed after testing, 2026-10-23). A full force re-layout scrambled crossing-free drawings (dodecahedron: 0 → 10 crossings, vertices jumping 270 px). Now, when force turns on, every edge keeps its current length as its natural length, every vertex keeps its current spot as home, vertices only push each other when closer than about 80 px, and a weak pull returns them home. Measured on the dodecahedron: 0 crossings after, vertices move at most 18 px.
-- **Dragging in force mode:** the dragged vertex is pinned to the pointer and nearby vertices get pushed aside. **On release it rejoins the simulation with the drop spot as its new home**, and the pushed vertices spring back to theirs.
+- **Force mode is gentle** (changed after testing, 2026-10-23; replaced on 2026-11-05, see below). A full force re-layout scrambled crossing-free drawings (dodecahedron: 0 → 10 crossings, vertices jumping 270 px). Now, when force turns on, every edge keeps its current length as its natural length, every vertex keeps its current spot as home, vertices only push each other when closer than about 80 px, and a weak pull returns them home. Measured on the dodecahedron: 0 crossings after, vertices move at most 18 px.
+- **Dragging in force mode:** the dragged vertex is pinned and nearby vertices get pushed aside. **On release it rejoins the simulation with the drop spot as its new home**, and the pushed vertices spring back to theirs.
+- **Changed 2026-11-05** (professor and team, see [research/07](07-force-mode-feel.md)): force mode is no longer gentle. It is a force-directed layout that keeps topology (PrEd): edges pull towards one common length, vertices push each other apart, and no vertex or edge can pass over the other, so the drawing keeps tidying up while its crossings stay the same (0 for planar graphs). The dragged vertex is held under the pointer, edges in its way move aside, the graph comes after it, and the dropped vertex stays put while the rest settles around it, as in CS Academy. Vertices pushed aside no longer spring back to their old spots.
 - **New edge:** click one vertex, then another (not drag from vertex to vertex), so dragging always means moving.
 - Switching modes never resets the layout.
-- **Force is on when the editor opens** (team decision, 2026-10-23; before that it started frozen). Gentle force mode keeps the first layout's crossings, so starting with it costs nothing and shows the physics right away.
+- **Force is on when the editor opens** (team decision, 2026-10-23; before that it started frozen). Gentle force mode kept the first layout's crossings, so starting with it cost nothing and showed the physics right away. Since 2026-11-05 force mode keeps the crossings too, and the editor opens on the drawing force mode has already tidied, so nothing jumps when it appears (see [research/07](07-force-mode-feel.md)).
 
 ## Implementation notes
 

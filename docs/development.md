@@ -22,7 +22,7 @@ docs/                       requirements, research, policies
 main.ipynb                  demo notebook
 ```
 
-Python sends the graph to the browser as lists in `GraphWidget` traits (`nodes`, `edges`, `positions`, `width`, `height`). The TypeScript code reads them with `model.get(...)` and updates the Cytoscape.js graph when they change. Cytoscape.js draws and handles mouse input; our d3-force simulation (`forces.ts`) computes force-mode positions and feeds them to it. Positions are normalized to [0, 1].
+Python sends the graph to the browser as lists in `GraphWidget` traits (`nodes`, `edges`, `positions`, `width`, `height`). The TypeScript code reads them with `model.get(...)` and updates the Cytoscape.js graph when they change. Cytoscape.js draws and handles mouse input; our d3-force simulation (`forces.ts`) computes force-mode positions and feeds them to it. Positions are normalized to [0, 1] across the canvas; a vertex moved past the canvas while the view is zoomed out (allowed since 2026-11-05) has coordinates outside that range.
 
 ## One-time setup
 
@@ -100,7 +100,7 @@ The non-planar candidate pool includes both the crossing-free layout of a large 
 
 Candidate positions are scored in adaptive batches based on vertex degree and graph size. Both crossing/near-miss scores and geometry energy use batching, so a high-degree vertex cannot allocate arrays for the whole search grid at once.
 
-Done: dragging, force/freeze toggle (d3-force, starts with force on, which is gentle enough to keep the first layout and pushes vertices off edges, see research/03 and 05); drawing with Cytoscape.js; zoom buttons and Ctrl+wheel (a plain wheel keeps scrolling the notebook), adding and removing vertices and edges, edits go straight into the NetworkX graph; undo/redo; a preview line and a hint while drawing an edge (research/06); an Arrange button that reruns the first-layout algorithm on the current graph (`widget.arrange()` in Python), with vertices gliding to their new spots (instant with "reduce motion").
+Done: dragging, force/freeze toggle (d3-force, starts with force on; since 2026-11-05 force mode is a layout that keeps the drawing's crossings (PrEd), keeps tidying it up and spreads it over the canvas, and dragging works like CS Academy's, see research/07); drawing with Cytoscape.js; zoom buttons and Ctrl+wheel (a plain wheel keeps scrolling the notebook), adding and removing vertices and edges, edits go straight into the NetworkX graph; undo/redo; a preview line and a hint while drawing an edge (research/06); an Arrange button that reruns the first-layout algorithm on the current graph (`widget.arrange()` in Python), with vertices gliding to their new spots and the view gliding to put the graph in its middle at the same zoom (instant with "reduce motion").
 
 Not done yet: labels (showing, editing, colors), see requirements.md.
 

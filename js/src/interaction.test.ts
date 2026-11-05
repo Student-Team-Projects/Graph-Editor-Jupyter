@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   canvasScale,
+  centredPan,
   clickVertex,
   easeInOut,
   HELP,
@@ -105,4 +106,13 @@ test("a narrow canvas shows the whole drawing area", () => {
 test("a wide canvas keeps the normal size", () => {
   assert.equal(canvasScale(800, 800), 1);
   assert.equal(canvasScale(1200, 800), 1);
+});
+
+test("after Arrange the view is panned so the graph is in the middle of it, at the same zoom", () => {
+  // The user (2026-11-05): Arrange should put the graph in the middle of the current view.
+  const points: [number, number][] = [[100, 50], [300, 250], [200, 150]];
+  const zoom = 0.5;
+  const pan = centredPan(points, zoom, 800, 500);
+  // The middle of the points (200, 150) is drawn at the middle of the view.
+  assert.deepEqual([200 * zoom + pan.x, 150 * zoom + pan.y], [400, 250]);
 });
