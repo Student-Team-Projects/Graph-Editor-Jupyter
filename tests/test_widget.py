@@ -293,7 +293,7 @@ def test_arrange_redraws_a_tangled_planar_graph_without_crossings():
     send(widget, type="arrange", positions=tangled)
     by_node = {widget._node_of[int(k)]: p for k, p in widget.positions.items()}
     assert count_crossings(graph, by_node) == 0
-    assert sent == [{"type": "set_positions", "positions": widget.positions, "settle": True}]
+    assert sent == [{"type": "set_positions", "positions": widget.positions, "settle": True, "mode": "crossings"}]
 
 
 def test_arrange_can_be_undone():
@@ -324,7 +324,7 @@ def test_arrange_reports_back_even_if_layout_fails(monkeypatch):
     sent = []
     widget.send = sent.append
 
-    def broken():
+    def broken(mode="crossings"):
         raise RuntimeError("layout bug")
 
     monkeypatch.setattr(widget, "_best_layout", broken)
@@ -337,3 +337,40 @@ def test_arrange_empty_graph():
     widget = GraphWidget(nx.Graph())
     widget.arrange()
     assert widget.positions == {}
+
+
+def test_arrange_for_looks_draws_petersen_as_a_pentagon_around_a_pentagram():
+    from graph_editor_jupyter.looks import shown_symmetry
+
+    graph = nx.petersen_graph()
+    widget = GraphWidget(graph)
+    sent = []
+    widget.send = sent.append
+    send(widget, type="arrange", mode="looks")
+    by_node = {widget._node_of[int(k)]: p for k, p in widget.positions.items()}
+    assert shown_symmetry(graph, by_node) == 10
+    # The front end needs the mode to keep the drawing in force mode (shape memory).
+    assert sent == [{"type": "set_positions", "positions": widget.positions, "settle": True, "mode": "looks"}]
+    assert widget.can_undo
+
+
+def test_arrange_for_looks_from_python():
+    widget = GraphWidget(nx.cycle_graph(6))
+    sent = []
+    widget.send = sent.append
+    widget.arrange(mode="looks")
+    assert sent[-1]["mode"] == "looks"
+
+
+def test_arrange_rejects_an_unknown_mode_from_python():
+    widget = GraphWidget(nx.cycle_graph(4))
+    with pytest.raises(ValueError):
+        widget.arrange(mode="pretty")
+
+
+def test_an_unknown_arrange_mode_from_the_front_end_means_fewest_crossings():
+    widget = GraphWidget(nx.cycle_graph(4))
+    sent = []
+    widget.send = sent.append
+    send(widget, type="arrange", mode="pretty")
+    assert sent[-1]["mode"] == "crossings"

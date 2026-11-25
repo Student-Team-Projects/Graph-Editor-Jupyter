@@ -1,13 +1,13 @@
 // Force mode physics. Kept free of DOM code so it can be tested in Node (forces.test.ts).
 //
-// Force mode is a force-directed layout that keeps the drawing's topology: PrEd (Bertault 2000),
-// see docs/research/07-force-mode-feel.md. Edges pull towards one common length, vertices push
-// each other apart when close, and vertices are pushed off edges, so the graph drifts towards an
-// even, tidy drawing. But every tick, no vertex moves towards an edge by more than half of its
-// distance to it (less a margin), and no edge moves towards a vertex by more than that either. So no vertex ever
-// passes over an edge, and the crossings stay what they were: the crossing-free first layout stays
-// crossing-free. Only a vertex dragged by hand can pass over an edge. The edge length is picked so
-// the tidied drawing fills the canvas, and forceFill centres and stretches it to use the canvas.
+// Force mode is a force-directed layout, see docs/research/07-force-mode-feel.md. Edges pull
+// towards one common length, vertices push each other apart when close, and vertices are pushed
+// off edges, so the graph drifts towards an even, tidy drawing. It doesn't hold on to the
+// drawing's structure: vertices may pass over edges and crossings may come and go (the user,
+// 2026-11-26; until then a crossing guard, PrEd, kept the crossings and made the motion stiff).
+// Once the graph has nearly settled, forceUntangle takes away crossings a single vertex can undo.
+// The edge length is picked so the tidied drawing fills the canvas, and forceFill centres and
+// stretches it to use the canvas.
 import {
   forceCollide,
   forceSimulation,
@@ -36,17 +36,19 @@ const DEFAULT_LENGTH = NODE_RADIUS * 6; // with no edges
 const REPEL_REACH = 2.5;
 const REPULSION = 0.2;
 // A vertex closer than EDGE_CLEARANCE to an edge it isn't part of is pushed straight away from
-// it, and the edge's ends the other way (PrEd). Weaker or shorter-reaching, and long outer edges
+// it, and the edge's ends the other way (as in PrEd, Bertault 2000). Weaker or shorter-reaching, and long outer edges
 // pressed vertices against themselves (16 px away in the dodecahedron, Petersen and K5).
 const EDGE_CLEARANCE = NODE_RADIUS * 4;
 const EDGE_PUSH = 1;
-// Physics never brings a vertex closer than this to an edge it isn't part of, and pushes it out
-// hard (not scaled by alpha, like collisions) if it is closer, for instance after a drop. Without
-// that, edges could press a vertex ever closer to an edge until rounding put it on the other side.
-// Two radii, so an edge passes a circle at least a radius away instead of touching it (the user,
-// 2026-11-05: a Petersen vertex sat right against an edge).
+// A vertex closer than this to an edge it isn't part of is pushed out hard (not scaled by alpha,
+// like collisions), for instance after a drop. Two radii, so an edge passes a circle at least a
+// radius away instead of touching it (the user, 2026-11-05: a Petersen vertex sat right against
+// an edge).
 const EDGE_MIN = NODE_RADIUS * 2;
 const EDGE_MIN_PUSH = 0.5;
+// Up to this many pushes off edges add up on one vertex; beyond that they are scaled down so
+// they add up to this many on average (see forceVertexEdge).
+const EDGE_PUSHES_SUMMED = 3;
 
 export interface Vertex extends SimulationNodeDatum {
   id: number;
@@ -57,6 +59,7 @@ export interface Vertex extends SimulationNodeDatum {
   layer?: string; // in a tree drawn in levels: vertices with the same layer stay on one level
   depth?: number; // and the level's number, 0 for the root at the top
   levelY?: number; // a held vertex's height when it was grabbed, for its level (forceLayers)
+  hopping?: boolean; // moved by forceUntangle to a better spot, over edges (pinned with fx, fy)
 }
 
 // Self-loops are not links.
@@ -158,16 +161,35 @@ export function forceRepel() {
 }
 
 // A d3 force: each vertex is pushed away from nearby edges it doesn't belong to, and the edge's
-// ends get the opposite push, shared by how close the vertex is to each (PrEd). A dragged vertex
+// ends get the opposite push, shared by how close the vertex is to each. A dragged vertex
 // is pinned, so the whole push goes to the edge: an edge moves out of the way of a vertex dragged
 // at it, as in CS Academy.
+//
+// A vertex with more than EDGE_PUSHES_SUMMED pushes (counting the pushes back on an edge's ends by
+// how much of each push they take) gets them scaled down to that many on average. In a dense graph
+// a vertex is near dozens of edges and an edge near dozens of vertices; summed, their pushes
+// overshot every tick and the circulant carpet shook back and forth, 15 700 px of motion in a
+// second for 600 px of progress (the user, 2026-11-26). Averaging every vertex's pushes was too
+// weak: in the dodecahedron a vertex is often near two or three edges, and drops left crossings.
 export function forceVertexEdge(clearance = EDGE_CLEARANCE, strength = EDGE_PUSH) {
   let vertices: Vertex[] = [];
   let links: Link[] = [];
+  const pushes = new Map<Vertex, { x: number; y: number; weight: number }>();
+  const add = (v: Vertex, x: number, y: number, weight: number) => {
+    const p = pushes.get(v);
+    if (p) {
+      p.x += x;
+      p.y += y;
+      p.weight += weight;
+    } else {
+      pushes.set(v, { x, y, weight });
+    }
+  };
   const force = (alpha: number) => {
+    pushes.clear();
     for (const v of vertices) {
       for (const l of links) {
-        if (!isForeign(v, l)) continue;
+        if (!isForeign(v, l) || v.hopping || l.source.hopping || l.target.hopping) continue;
         const { source: a, target: b } = l;
         const ex = b.x! - a.x!;
         const ey = b.y! - a.y!;
@@ -189,13 +211,15 @@ export function forceVertexEdge(clearance = EDGE_CLEARANCE, strength = EDGE_PUSH
           dy /= d;
         }
         const push = (clearance - d) * strength * alpha + Math.max(0, EDGE_MIN - d) * EDGE_MIN_PUSH;
-        v.vx = (v.vx ?? 0) + dx * push;
-        v.vy = (v.vy ?? 0) + dy * push;
-        a.vx = (a.vx ?? 0) - dx * push * (1 - t);
-        a.vy = (a.vy ?? 0) - dy * push * (1 - t);
-        b.vx = (b.vx ?? 0) - dx * push * t;
-        b.vy = (b.vy ?? 0) - dy * push * t;
+        add(v, dx * push, dy * push, 1);
+        add(a, -dx * push * (1 - t), -dy * push * (1 - t), 1 - t);
+        add(b, -dx * push * t, -dy * push * t, t);
       }
+    }
+    for (const [v, { x, y, weight }] of pushes) {
+      const share = Math.min(1, EDGE_PUSHES_SUMMED / weight);
+      v.vx = (v.vx ?? 0) + x * share;
+      v.vy = (v.vy ?? 0) + y * share;
     }
   };
   force.initialize = (nodes: Vertex[]) => {
@@ -208,82 +232,196 @@ export function forceVertexEdge(clearance = EDGE_CLEARANCE, strength = EDGE_PUSH
   return force;
 }
 
-// A d3 force that must run last: it shortens the moves all the other forces asked for, so that
-// in one tick no vertex passes over an edge and no edge passes over a vertex (PrEd). For each
-// vertex and each edge it isn't part of, with g = (distance - EDGE_MIN) / 2: the vertex may come
-// at most g closer to the edge, and so may each end of the edge come at most g towards the
-// vertex's side. (Checking each end, not just the nearest point, also catches an edge swinging
-// round to hit the vertex with its far end.) Together they can close at most distance - EDGE_MIN,
-// so they never come closer than EDGE_MIN.
-//
-// Only the part of a move aimed at the edge is limited; the rest of the move is kept. That is
-// enough: the distance from a point to a segment shrinks by at most the part of the move along
-// the line from the segment to the point. Limiting the whole move instead (until 2026-11-05)
-// stopped a vertex between two edges dead: a move only slightly towards one of them was cancelled
-// altogether, so a vertex an edge had been dragged over could stay on it.
-export function forceKeepCrossings(decay = VELOCITY_DECAY) {
+// Untangling (the user, 2026-11-25: "you can change the structure itself, at times it looks very
+// weird"). Physics alone leaves the crossings a drag made: random drags through the dodecahedron
+// left it with 16 extra crossings on average. So once the graph has nearly settled (alpha below
+// UNTANGLE_ALPHA), every vertex in a crossing or a near-miss (on an edge or on another vertex)
+// tries other places, also on the far side of edges. A vertex moves if that takes away crossings,
+// or, with the same crossings, takes away near-misses. One move at a time, the best first, until
+// no move helps. The vertices then hop there, gliding over HOP_TICKS ticks, and the physics tidies
+// around them. Each round only lowers the crossings or the near-misses; the physics afterwards
+// may bring some back, so there are at most MAX_ROUNDS rounds per drag.
+const UNTANGLE_ALPHA = 0.1;
+const HOP_ALPHA = 0.3; // the physics warms up again after a hop, to tidy around it
+const HOP_TICKS = 20;
+const NEAR_MISS = NODE_RADIUS * 1.5; // a vertex closer than this to an edge it isn't part of sits on it
+const HOP_RADII = [0.5, 1, 1.5]; // candidate places: rings of these many edge lengths
+const HOP_ANGLES = 24;
+const MAX_HOPS = 8; // per round
+const MAX_ROUNDS = 6; // rounds of hops before the drawing is left as it is, per drag or start
+const DROPPED_COST = 10; // moving the dropped vertex counts like edges 10 lengths off
+// Point-segment and segment-segment checks one round may do (about 20 ms): graphs with hundreds
+// of vertices get part of the search per round instead of a stall.
+const UNTANGLE_WORK = 6e5;
+
+type Point = [number, number];
+
+const orient = (a: Point, b: Point, c: Point) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+const cross = (a: Point, b: Point, c: Point, d: Point) =>
+  orient(c, d, a) * orient(c, d, b) < 0 && orient(a, b, c) * orient(a, b, d) < 0;
+
+function pointToSegment(p: Point, a: Point, b: Point): number {
+  const ex = b[0] - a[0];
+  const ey = b[1] - a[1];
+  const length2 = ex * ex + ey * ey;
+  const t = length2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / length2));
+  return Math.hypot(p[0] - a[0] - t * ex, p[1] - a[1] - t * ey);
+}
+
+// Hops that untangle the drawing: [vertex, x, y]. Held and hopping vertices stay; a dropped one
+// moves only if nothing else helps as much, since the user put it there.
+export function untangle(vertices: Vertex[], links: Link[], length: number, bounds?: Bounds): [Vertex, number, number][] {
+  const at = new Map<Vertex, Point>(vertices.map((v) => [v, [v.x!, v.y!]]));
+  const edgesOf = new Map<Vertex, Link[]>(vertices.map((v) => [v, []]));
+  for (const l of links) {
+    edgesOf.get(l.source)?.push(l);
+    edgesOf.get(l.target)?.push(l);
+  }
+  const neighbours = (v: Vertex) => edgesOf.get(v)!.map((l) => (l.source === v ? l.target : l.source));
+  let work = 0;
+  // The crossings and near-misses that involve v, with v at p. Moving v changes only these.
+  const score = (v: Vertex, p: Point): [number, number] => {
+    const own = edgesOf.get(v)!;
+    work += own.length * links.length + links.length + own.length * vertices.length + vertices.length;
+    let crossings = 0;
+    let near = 0;
+    for (const e of own) {
+      const w = e.source === v ? e.target : e.source;
+      const q = at.get(w)!;
+      for (const f of links) {
+        if (f.source === v || f.target === v || f.source === w || f.target === w) continue;
+        if (cross(p, q, at.get(f.source)!, at.get(f.target)!)) crossings++;
+      }
+      for (const u of vertices) if (u !== v && u !== w && pointToSegment(at.get(u)!, p, q) < NEAR_MISS) near++;
+    }
+    for (const f of links) {
+      if (f.source !== v && f.target !== v && pointToSegment(p, at.get(f.source)!, at.get(f.target)!) < NEAR_MISS) near++;
+    }
+    for (const u of vertices) {
+      if (u !== v && Math.hypot(at.get(u)![0] - p[0], at.get(u)![1] - p[1]) < u.r + v.r) near++;
+    }
+    return [crossings, near];
+  };
+  // How natural a place is, among equally untangled ones: edges near the common length, and
+  // close to where the vertex is.
+  const cost = (v: Vertex, p: Point) =>
+    neighbours(v).reduce((sum, w) => sum + Math.abs(Math.hypot(at.get(w)![0] - p[0], at.get(w)![1] - p[1]) / length - 1), 0) +
+    (0.1 * Math.hypot(p[0] - at.get(v)![0], p[1] - at.get(v)![1])) / length +
+    (v.dropped ? DROPPED_COST : 0);
+  const inside = (v: Vertex, [x, y]: Point) =>
+    !bounds || (x >= bounds.left + v.r + BORDER_GAP && x <= bounds.right - v.r - BORDER_GAP && y >= bounds.top + v.r + BORDER_GAP && y <= bounds.bottom - v.r - BORDER_GAP);
+  const candidates = (v: Vertex): Point[] => {
+    const [x, y] = at.get(v)!;
+    const near = neighbours(v).map((w) => at.get(w)!);
+    const centres: Point[] = [[x, y]];
+    if (near.length > 0) centres.push([near.reduce((s, q) => s + q[0], 0) / near.length, near.reduce((s, q) => s + q[1], 0) / near.length]);
+    const out: Point[] = centres.slice(1);
+    for (const [cx, cy] of centres) {
+      for (const r of HOP_RADII) {
+        for (let i = 0; i < HOP_ANGLES; i++) {
+          const angle = (2 * Math.PI * i) / HOP_ANGLES;
+          // A vertex of a tree drawn in levels keeps its level.
+          out.push(v.layer != null ? [cx + r * length * Math.cos(angle), y] : [cx + r * length * Math.cos(angle), cy + r * length * Math.sin(angle)]);
+        }
+      }
+    }
+    return out.filter((p) => inside(v, p));
+  };
+  // A drawing with more crossings than edges is a tangle by nature (the circulant carpet has
+  // hundreds whichever way it is drawn): single hops there only make the picture jerk.
+  let total = 0;
+  for (let i = 0; i < links.length && total <= links.length; i++) {
+    for (let j = i + 1; j < links.length; j++) {
+      const [e, f] = [links[i], links[j]];
+      if (e.source === f.source || e.source === f.target || e.target === f.source || e.target === f.target) continue;
+      if (cross(at.get(e.source)!, at.get(e.target)!, at.get(f.source)!, at.get(f.target)!)) total++;
+    }
+  }
+  if (total > links.length) return [];
+  const hops: [Vertex, number, number][] = [];
+  for (let hop = 0; hop < MAX_HOPS && work < UNTANGLE_WORK; hop++) {
+    let best: { v: Vertex; p: Point; gain: [number, number]; cost: number } | null = null;
+    for (const v of vertices) {
+      if ((v.fx != null && !v.dropped) || work >= UNTANGLE_WORK) continue;
+      const [c0, n0] = score(v, at.get(v)!);
+      if (c0 === 0 && n0 === 0) continue;
+      for (const p of candidates(v)) {
+        const [c, n] = score(v, p);
+        if (c > c0 || (c === c0 && n >= n0)) continue;
+        const gain: [number, number] = [c0 - c, n0 - n];
+        const k = cost(v, p);
+        if (!best || gain[0] > best.gain[0] || (gain[0] === best.gain[0] && (gain[1] > best.gain[1] || (gain[1] === best.gain[1] && k < best.cost)))) {
+          best = { v, p, gain, cost: k };
+        }
+      }
+    }
+    if (!best) break;
+    at.set(best.v, best.p);
+    hops.push([best.v, best.p[0], best.p[1]]);
+  }
+  // A vertex that hopped twice goes straight to its last place.
+  const last = new Map(hops.map(([v, x, y]) => [v, [x, y] as Point]));
+  return [...last].map(([v, [x, y]]) => [v, x, y]);
+}
+
+// The d3 force that runs untangle when the simulation has nearly settled, and glides the
+// vertices to their new places. A hopping vertex is pinned like a dragged one, so it goes exactly
+// there; the push off edges leaves it alone, so it doesn't shove edges along its way.
+export function forceUntangle() {
   let vertices: Vertex[] = [];
   let links: Link[] = [];
-  const force = () => {
-    // For each vertex: directions it must not move far along (unit vectors) and how far it may.
-    const limits = new Map<Vertex, { ux: number; uy: number; room: number }[]>();
-    const most = new Map<Vertex, number>(); // a limit on the whole move, for a vertex on an edge
-    const limit = (v: Vertex, ux: number, uy: number, room: number) => {
-      if (v.fx != null) return; // pinned: moved by hand, not by velocity
-      const list = limits.get(v) ?? [];
-      list.push({ ux, uy, room });
-      limits.set(v, list);
-    };
-    for (const l of links) {
-      const { source: a, target: b } = l;
-      for (const w of vertices) {
-        if (!isForeign(w, l)) continue;
-        const { d, t } = toSegment(w.x!, w.y!, a, b);
-        const room = Math.max(0, d - EDGE_MIN) / 2;
-        if (d < 1e-6) {
-          // On the edge: no side to keep; just don't let the edge move a lot.
-          for (const end of [a, b]) most.set(end, Math.min(most.get(end) ?? Infinity, room));
-          continue;
-        }
-        // Unit direction from the edge to the vertex.
-        const nx = (w.x! - (a.x! + t * (b.x! - a.x!))) / d;
-        const ny = (w.y! - (a.y! + t * (b.y! - a.y!))) / d;
-        limit(w, -nx, -ny, room);
-        limit(a, nx, ny, room);
-        limit(b, nx, ny, room);
+  let length = DEFAULT_LENGTH;
+  let bounds: () => Bounds | undefined = () => undefined;
+  let warm: (alpha: number) => void = () => {};
+  let armed = true;
+  let warmed = false; // the simulation is warm because of a hop, not a drag or a new drawing
+  let rounds = 0;
+  const hops = new Map<Vertex, { from: Point; to: Point; step: number }>();
+  const force = (alpha: number) => {
+    for (const [v, hop] of hops) {
+      // Let go of (releaseDropped), or grabbed by the user: the hop is over.
+      if (!v.hopping || v.dragged) {
+        v.hopping = false;
+        hops.delete(v);
+        continue;
       }
+      hop.step++;
+      const k = hop.step / HOP_TICKS;
+      const ease = k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k);
+      v.fx = hop.from[0] + (hop.to[0] - hop.from[0]) * ease;
+      v.fy = hop.from[1] + (hop.to[1] - hop.from[1]) * ease;
+      if (hop.step < HOP_TICKS) continue;
+      v.x = v.fx;
+      v.y = v.fy;
+      v.fx = v.fy = null;
+      v.vx = v.vy = 0;
+      v.hopping = false;
+      hops.delete(v);
     }
-    const k = 1 - decay; // a tick moves a vertex by its velocity times this
-    const excess = (v: Vertex, { ux, uy, room }: { ux: number; uy: number; room: number }) =>
-      ((v.vx ?? 0) * ux + (v.vy ?? 0) * uy) * k - room;
-    for (const [v, list] of limits) {
-      // Take away the part of the move beyond each limit. Doing that for one limit can push the
-      // move over another, so repeat a few times, then shorten the whole move if still needed.
-      for (let round = 0; round < 4; round++) {
-        let fine = true;
-        for (const c of list) {
-          const over = excess(v, c);
-          if (over <= 1e-9) continue;
-          fine = false;
-          v.vx = (v.vx ?? 0) - (c.ux * over) / k;
-          v.vy = (v.vy ?? 0) - (c.uy * over) / k;
-        }
-        if (fine) break;
-      }
-      let scale = 1;
-      for (const c of list) {
-        const along = ((v.vx ?? 0) * c.ux + (v.vy ?? 0) * c.uy) * k;
-        if (along > c.room + 1e-9) scale = Math.min(scale, c.room / along);
-      }
-      v.vx = (v.vx ?? 0) * scale;
-      v.vy = (v.vy ?? 0) * scale;
+    if (vertices.some((v) => v.dragged)) {
+      rounds = 0; // a new drag: untangling may run its rounds again afterwards
+      return;
     }
-    for (const [v, value] of most) {
-      if (v.fx != null) continue;
-      const moves = Math.hypot(v.vx ?? 0, v.vy ?? 0) * k;
-      if (moves <= value) continue;
-      v.vx = (v.vx ?? 0) * (value / moves);
-      v.vy = (v.vy ?? 0) * (value / moves);
+    if (alpha > UNTANGLE_ALPHA) {
+      if (!warmed) rounds = 0; // force mode turned on, Arrange, or an edit
+      armed = true;
+      return;
+    }
+    warmed = false;
+    if (!armed || hops.size > 0 || rounds >= MAX_ROUNDS) return;
+    armed = false;
+    rounds++;
+    const found = untangle(vertices, links, length, bounds());
+    for (const [v, x, y] of found) {
+      v.dropped = false;
+      v.hopping = true;
+      v.fx = v.x;
+      v.fy = v.y;
+      hops.set(v, { from: [v.x!, v.y!], to: [x, y], step: 0 });
+    }
+    if (found.length > 0) {
+      warmed = true;
+      warm(HOP_ALPHA);
     }
   };
   force.initialize = (nodes: Vertex[]) => {
@@ -291,6 +429,15 @@ export function forceKeepCrossings(decay = VELOCITY_DECAY) {
   };
   force.links = (next: Link[]) => {
     links = next;
+    return force;
+  };
+  force.edgeLength = (value: number) => {
+    length = value;
+    return force;
+  };
+  force.wire = (getBounds: () => Bounds | undefined, warmUp: (alpha: number) => void) => {
+    bounds = getBounds;
+    warm = warmUp;
     return force;
   };
   return force;
@@ -539,24 +686,59 @@ export function forceFill() {
   return force;
 }
 
+// No vertex moves more than MAX_STEP in one tick, whatever the forces add up to. In a dense graph
+// every vertex is near dozens of edges, and their pushes (and the edges' pushes back on their
+// ends) added up until vertices flew 300 px in one tick: the user saw the circulant carpet jerk
+// wildly when touched after Arrange for looks (2026-11-26). Must run after all other forces.
+const MAX_STEP = NODE_RADIUS;
+
+export function forceMaxStep(decay = VELOCITY_DECAY) {
+  let vertices: Vertex[] = [];
+  const force = () => {
+    const k = 1 - decay; // a tick moves a vertex by its velocity times this
+    for (const v of vertices) {
+      const step = Math.hypot(v.vx ?? 0, v.vy ?? 0) * k;
+      if (step <= MAX_STEP) continue;
+      v.vx = ((v.vx ?? 0) * MAX_STEP) / step;
+      v.vy = ((v.vy ?? 0) * MAX_STEP) / step;
+    }
+  };
+  force.initialize = (nodes: Vertex[]) => {
+    vertices = nodes;
+  };
+  return force;
+}
+
 // The common edge length of each simulation (see MIN_LENGTH), and its canvas.
 const lengths = new WeakMap<GraphSimulation, number>();
 const canvases = new WeakMap<GraphSimulation, Canvas | undefined>();
 
+// The forces of each simulation, by name, in the order they run.
+const parts = new WeakMap<GraphSimulation, Record<string, unknown>>();
+
+function part<T>(sim: GraphSimulation, name: string): T {
+  return parts.get(sim)![name] as T;
+}
+
 export function createSimulation(): GraphSimulation {
-  const sim = forceSimulation<Vertex, Link>()
-    .alphaDecay(ALPHA_DECAY)
-    .velocityDecay(VELOCITY_DECAY)
-    .force("link", forceSprings())
-    .force("repel", forceRepel())
-    .force("collide", forceCollide<Vertex>((v) => v.r + COLLIDE_GAP))
-    .force("edges", forceVertexEdge())
-    .force("fill", forceFill())
-    .force("layers", forceLayers())
-    .force("border", forceBorder())
-    // Must stay the last force: it checks the moves all the others produced.
-    .force("crossings", forceKeepCrossings())
-    .stop();
+  const sim = forceSimulation<Vertex, Link>().alphaDecay(ALPHA_DECAY).velocityDecay(VELOCITY_DECAY).stop();
+  const forces = {
+    untangle: forceUntangle(),
+    link: forceSprings(),
+    repel: forceRepel(),
+    collide: forceCollide<Vertex>((v) => v.r + COLLIDE_GAP),
+    edges: forceVertexEdge(),
+    fill: forceFill(),
+    layers: forceLayers(),
+    border: forceBorder(),
+    step: forceMaxStep(), // last: it limits what all the others did
+  };
+  parts.set(sim, forces);
+  for (const [name, force] of Object.entries(forces)) sim.force(name, force);
+  forces.untangle.wire(
+    () => forces.border.current(),
+    (alpha) => sim.alpha(Math.max(sim.alpha(), alpha)),
+  );
   lengths.set(sim, DEFAULT_LENGTH);
   return sim;
 }
@@ -573,12 +755,12 @@ export function radiusForLabel(textWidth: number): number {
 export function refreshForces(sim: GraphSimulation, vertices: Vertex[], links: Link[]): void {
   const length = lengths.get(sim) ?? DEFAULT_LENGTH;
   sim.nodes(vertices);
-  sim.force<ReturnType<typeof forceSprings>>("link")!.links(links).distance(length);
-  sim.force<ReturnType<typeof forceRepel>>("repel")!.edgeLength(length);
-  sim.force<ReturnType<typeof forceVertexEdge>>("edges")!.links(links);
-  sim.force<ReturnType<typeof forceKeepCrossings>>("crossings")!.links(links);
-  sim.force<ReturnType<typeof forceLayers>>("layers")!.links(links);
-  sim.force<ReturnType<typeof forceCollide<Vertex>>>("collide")!.radius((v) => v.r + COLLIDE_GAP);
+  part<ReturnType<typeof forceSprings>>(sim, "link").links(links).distance(length);
+  part<ReturnType<typeof forceRepel>>(sim, "repel").edgeLength(length);
+  part<ReturnType<typeof forceVertexEdge>>(sim, "edges").links(links);
+  part<ReturnType<typeof forceUntangle>>(sim, "untangle").links(links).edgeLength(length);
+  part<ReturnType<typeof forceLayers>>(sim, "layers").links(links);
+  part<ReturnType<typeof forceCollide<Vertex>>>(sim, "collide").radius((v) => v.r + COLLIDE_GAP);
 }
 
 // The trial tidies until the simulation stops, but does at most TRIAL_WORK vertex-pair and
@@ -599,6 +781,7 @@ function trialFill(vertices: Vertex[], links: Link[], length: number, canvas: Ca
   const copies = new Map(vertices.map((v) => [v, copyOf(v)]));
   const copiedLinks = links.map((l) => ({ source: copies.get(l.source)!, target: copies.get(l.target)! }));
   const trial = createSimulation();
+  trial.force("untangle", null); // only the size is wanted
   lengths.set(trial, length);
   refreshForces(trial, [...copies.values()], copiedLinks);
   trial.alpha(START_ALPHA);
@@ -631,16 +814,16 @@ export function captureRestState(
     if (fill > 1e-6) length = Math.min(Math.max((length * FILL) / fill, MIN_LENGTH), MAX_LENGTH);
   }
   lengths.set(sim, length);
-  sim.force<ReturnType<typeof forceFill>>("fill")!.canvas(canvas);
+  part<ReturnType<typeof forceFill>>(sim, "fill").canvas(canvas);
   canvases.set(sim, canvas);
-  const border = sim.force<ReturnType<typeof forceBorder>>("border")!;
+  const border = part<ReturnType<typeof forceBorder>>(sim, "border");
   border.bounds(canvas && (bounds ?? canvasBounds(canvas)));
   refreshForces(sim, vertices, links);
 }
 
 // Where vertices may be, when the view is zoomed out further than the canvas (widget.ts).
 export function setBounds(sim: GraphSimulation, bounds: Bounds): void {
-  const border = sim.force<ReturnType<typeof forceBorder>>("border")!;
+  const border = part<ReturnType<typeof forceBorder>>(sim, "border");
   if (border.current()) border.bounds(bounds);
 }
 
@@ -654,9 +837,9 @@ export function tidied(sim: GraphSimulation, vertices: Vertex[], links: Link[]):
   const copy = createSimulation();
   lengths.set(copy, lengths.get(sim) ?? DEFAULT_LENGTH);
   const canvas = canvases.get(sim);
-  const bounds = sim.force<ReturnType<typeof forceBorder>>("border")!.current();
-  copy.force<ReturnType<typeof forceFill>>("fill")!.canvas(canvas);
-  copy.force<ReturnType<typeof forceBorder>>("border")!.bounds(bounds);
+  const bounds = part<ReturnType<typeof forceBorder>>(sim, "border").current();
+  part<ReturnType<typeof forceFill>>(copy, "fill").canvas(canvas);
+  part<ReturnType<typeof forceBorder>>(copy, "border").bounds(bounds);
   refreshForces(copy, [...copies.values()], copiedLinks);
   copy.alpha(START_ALPHA);
   for (let i = 0; i < trialTicks(vertices, links) && copy.alpha() > copy.alphaMin(); i++) {
@@ -693,9 +876,9 @@ export function endDrag(vertex: Vertex): void {
 export function releaseDropped(vertices: Vertex[]): boolean {
   let any = false;
   for (const v of vertices) {
-    if (!v.dropped && !v.dragged) continue;
+    if (!v.dropped && !v.dragged && !v.hopping) continue;
     any = true;
-    v.dropped = v.dragged = false;
+    v.dropped = v.dragged = v.hopping = false;
     v.fx = v.fy = null;
     v.levelY = undefined;
   }

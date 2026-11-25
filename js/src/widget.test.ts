@@ -217,7 +217,7 @@ test("Arrange moves the view so the redrawn graph is in the middle of it", () =>
     },
     vertices: new Map(vertices.map((x) => [x.id, x])), links: [], glide, force: false,
     simulation: createSimulation(),
-    arrangeButton: {},
+    arrangeButton: { setAttribute: () => {} }, arrangeMenu: { hidden: true },
     model: { get: (key: string) => (key === "width" ? 800 : 500), set: () => {}, save_changes: () => {}, send: () => {} },
     updatePreview: () => {}, updatePositions: () => {},
   });
@@ -227,5 +227,58 @@ test("Arrange moves the view so the redrawn graph is in the middle of it", () =>
   tick(MOVE_MS * 2);
   // The new drawing's middle, (400, 250), is drawn in the middle of the 800 x 500 view.
   assert.deepEqual([400 * 0.5 + pan.x, 250 * 0.5 + pan.y], [400, 250]);
+  editor.simulation.stop();
+});
+
+test("the Arrange menu sends the chosen mode to Python", () => {
+  const sent: any[] = [];
+  const editor = Object.create(GraphEditor.prototype);
+  Object.assign(editor, {
+    vertices: new Map(), glide: new Glide(() => 0, () => {}, () => 0),
+    arrangeButton: { setAttribute: () => {} }, arrangeMenu: { hidden: false },
+    model: { send: (message: unknown) => sent.push(message) },
+  });
+  editor.arrange("looks");
+  assert.equal(sent[0].type, "arrange");
+  assert.equal(sent[0].mode, "looks");
+  assert.equal(editor.arrangeMenu.hidden, true);
+});
+
+test("after Arrange for looks, the drawing stays exactly as Python drew it until a vertex is touched", () => {
+  // Not tidied before or after the glide: that would undo the looks at once. Once a vertex is
+  // touched, physics tidies as usual (the user, 2026-11-26: don't try to keep the picture).
+  const pending = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  const glide = new Glide((callback) => { pending.set(++id, callback); return id; }, (frame) => { pending.delete(frame); }, () => 0);
+  const frame = (time: number) => {
+    const callbacks = [...pending.values()];
+    pending.clear();
+    callbacks.forEach((callback) => callback(time));
+  };
+  // A hexagon (cycle of six), first drawn squashed.
+  const vertices = Array.from({ length: 6 }, (_, i): Vertex => ({ id: i, label: String(i), r: NODE_RADIUS, x: 100 + 40 * i, y: 200 }));
+  const links = vertices.map((v, i) => ({ source: v, target: vertices[(i + 1) % 6] }));
+  const editor = Object.create(GraphEditor.prototype);
+  Object.assign(editor, {
+    cy: { pan: () => ({ x: 0, y: 0 }), zoom: () => 1, width: () => 800, height: () => 500, getElementById: () => ({ grabbed: () => false }) },
+    vertices: new Map(vertices.map((v) => [v.id, v])), links, glide, force: true,
+    simulation: createSimulation(),
+    arrangeButton: { setAttribute: () => {} }, arrangeMenu: { hidden: true },
+    model: { get: (key: string) => (key === "width" ? 800 : 500), set: () => {}, save_changes: () => {}, send: () => {} },
+    updatePreview: () => {}, updatePositions: () => {},
+  });
+  // Python's looks layout: a regular hexagon, normalized.
+  const positions: Record<string, [number, number]> = {};
+  for (let i = 0; i < 6; i++) positions[i] = [0.5 + 0.4 * Math.cos((Math.PI * i) / 3), 0.5 + 0.4 * Math.sin((Math.PI * i) / 3)];
+  editor.onCustomMessage({ type: "set_positions", positions, settle: true, mode: "looks" });
+  frame(0);
+  frame(MOVE_MS * 2);
+  const laidOut = vertices.map((v) => [v.x!, v.y!]);
+  for (let i = 0; i < 6; i++) {
+    const [x, y] = positions[i];
+    assert.ok(Math.hypot(laidOut[i][0] - (20 + x * 760), laidOut[i][1] - (20 + y * 460)) < 1e-6, `vertex ${i} isn't where Python put it`);
+  }
+  // At rest: the physics has cooled down, so nothing moves on its own.
+  assert.equal(editor.simulation.alpha(), 0);
   editor.simulation.stop();
 });

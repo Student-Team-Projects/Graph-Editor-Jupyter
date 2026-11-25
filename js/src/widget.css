@@ -78,3 +78,38 @@
   stroke-width: 2;
   stroke-dasharray: 6 4;
 }
+
+/* The Arrange menu: fewest crossings or looks. */
+.graph-editor .ge-menu-anchor {
+  position: relative;
+}
+
+.graph-editor .ge-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--ge-bg);
+  border: 1px solid var(--ge-border);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+}
+
+.graph-editor .ge-menu[hidden] {
+  display: none;
+}
+
+.graph-editor .ge-menu-item {
+  border-color: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.graph-editor .ge-menu-item:hover,
+.graph-editor .ge-menu-item:focus-visible {
+  border-color: var(--ge-accent);
+}

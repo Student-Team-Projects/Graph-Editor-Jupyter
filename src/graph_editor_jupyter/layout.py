@@ -617,6 +617,12 @@ def initial_layout(graph: nx.Graph, seed: int = 0, size: tuple[int, int] = DEFAU
 
     Connected components are laid out separately, using multiple rows when needed.
     """
+    return pack_components(graph, size, lambda component, sub_size: _layout_component(component, seed, sub_size))
+
+
+def pack_components(graph: nx.Graph, size: tuple[int, int], place) -> dict[object, Point]:
+    """Lays out each connected component with `place(component, slot_size)`, which returns
+    positions in [0, 1] x [0, 1] of its slot, and puts the slots side by side or in rows."""
     components = sorted(nx.connected_components(graph), key=len, reverse=True)
     if not components:
         return {}
@@ -640,7 +646,7 @@ def initial_layout(graph: nx.Graph, seed: int = 0, size: tuple[int, int] = DEFAU
             right = 1.0 if column == len(group) - 1 else left + usable * len(component) / total
             width, row_height = right - left, bottom - top
             sub_size = (max(1, int(size[0] * width)), max(1, int(size[1] * row_height)))
-            sub = _layout_component(graph.subgraph(component), seed, sub_size)
+            sub = place(graph.subgraph(component), sub_size)
             for v, (x, y) in sub.items():
                 pos[v] = (left + x * width, top + y * row_height)
             left = right + gap_x

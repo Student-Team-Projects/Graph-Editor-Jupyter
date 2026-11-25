@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fixture from "../test/dodecahedron.json";
 import demo from "../test/demo-graphs.json";
+// The dodecahedron as Arrange for looks draws it (looks_layout, in pixels of the 800 x 500 canvas).
+import looksFixture from "../test/dodecahedron-looks.json";
 import {
   captureRestState,
   createSimulation,
@@ -16,6 +18,7 @@ import {
   START_ALPHA,
   startDrag,
   tidied,
+  untangle,
   type GraphSimulation,
   type Link,
   type Vertex,
@@ -77,8 +80,9 @@ function settle(vertices: Vertex[], links: Link[]): GraphSimulation {
 
 // A drag the way widget.ts does it in force mode: the pointer moves to (x, y) in `steps` moves,
 // one tick each, waits `hold` ticks there, then lets go, and the physics runs until it stops.
-// `onTick` sees every tick of the drag. Returns where the dragged vertex was dropped.
-function drag(sim: GraphSimulation, vertices: Vertex[], dragged: Vertex, x: number, y: number, steps = 30, hold = 30, onTick = () => {}) {
+// `onTick` sees every tick of the drag, `afterDrop` every tick after it. Returns where the dragged
+// vertex was dropped.
+function drag(sim: GraphSimulation, vertices: Vertex[], dragged: Vertex, x: number, y: number, steps = 30, hold = 30, onTick = () => {}, afterDrop = () => {}) {
   sim.alphaTarget(0.3).alpha(0.3);
   startDrag(dragged, vertices);
   const [x0, y0] = [dragged.x!, dragged.y!];
@@ -91,7 +95,10 @@ function drag(sim: GraphSimulation, vertices: Vertex[], dragged: Vertex, x: numb
   endDrag(dragged);
   const dropped = [dragged.x!, dragged.y!];
   sim.alphaTarget(0).alpha(DROP_ALPHA);
-  while (sim.alpha() > sim.alphaMin()) tick(sim);
+  while (sim.alpha() > sim.alphaMin()) {
+    tick(sim);
+    afterDrop();
+  }
   releaseDropped(vertices); // what widget.ts does when the simulation stops
   return dropped;
 }
@@ -113,9 +120,8 @@ const lengthOf = ({ source, target }: Link) => Math.hypot(source.x! - target.x!,
 
 for (const [name, drawing] of Object.entries(DRAWINGS)) {
   test(`force mode keeps the crossings of the first layout: ${name}`, () => {
-    // Force mode is a layout that keeps topology (PrEd): the first layout's crossings, 0 for planar
-    // graphs, stay what they were however the drawing tidies up. Regression: in K5 the edges
-    // pressed a vertex ever closer to an edge until rounding put it on the other side.
+    // Tidying must not undo the first layout's work: its crossings, 0 for planar graphs, stay what
+    // they were. The editor opens on the tidied drawing (research/07).
     const { vertices, links } = build(drawing);
     const before = crossings(links);
     settle(vertices, links);
@@ -195,24 +201,6 @@ test("holding a leaf of a tree doesn't send the tree flying", () => {
   }
 });
 
-test("a vertex between two close edges can still slide along them", () => {
-  // Regression: a move only slightly towards one of the edges was cancelled altogether, so a
-  // vertex an edge had been dragged over stayed stuck on it.
-  const ends = [vertex(0, 100, 200), vertex(1, 500, 200), vertex(2, 100, 240), vertex(3, 500, 240)];
-  for (const v of ends) [v.fx, v.fy] = [v.x, v.y];
-  const w = vertex(4, 300, 220);
-  const sim = createSimulation();
-  refreshForces(sim, [...ends, w], [link(ends[0], ends[1]), link(ends[2], ends[3])]);
-  sim.alpha(0).alphaTarget(0);
-  for (let t = 0; t < 10; t++) {
-    w.vx = 10;
-    w.vy = 1; // mostly along the edges, a little towards the lower one
-    sim.tick();
-  }
-  assert.ok(w.x! > 320, `the vertex only slid to x = ${w.x!.toFixed(1)}`);
-  assert.ok(w.y! > 200 && w.y! < 240, `the vertex left the gap: y = ${w.y!.toFixed(1)}`);
-});
-
 test("a vertex near the canvas border is pushed back in", () => {
   // Regression: a vertex only stopped at the border, so the graph could rest pressed against it.
   // The other vertex is dropped, which turns off centring, so only the border push can do it.
@@ -285,24 +273,6 @@ test("force mode evens out edge lengths", () => {
   settle([a, b, c, d], links);
   const lengths = links.map(lengthOf);
   assert.ok(Math.max(...lengths) / Math.min(...lengths) < 1.3, `edge lengths ${lengths.map((l) => l.toFixed(0))}`);
-});
-
-test("physics never changes the crossings, even when shaken hard", () => {
-  // Every tick each vertex gets a random kick; the crossing count must not change.
-  const { vertices, links } = build(DRAWINGS.k5);
-  const sim = simulation(vertices, links);
-  const before = crossings(links);
-  let seed = 7;
-  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
-  sim.alpha(START_ALPHA);
-  for (let t = 0; t < 400; t++) {
-    for (const v of vertices) {
-      v.vx = (v.vx ?? 0) + random() * 60;
-      v.vy = (v.vy ?? 0) + random() * 60;
-    }
-    tick(sim);
-    assert.equal(crossings(links), before, `tick ${t}`);
-  }
 });
 
 test("long labels get a bigger circle, short ones keep the default", () => {
@@ -415,7 +385,9 @@ test("holding a vertex on an edge inside a graph doesn't make the graph shake", 
   assert.ok(path < 1.5 * net + 10, `vertices moved ${path.toFixed(0)} px back and forth to get ${net.toFixed(0)} px further`);
 });
 
-test("physics never carries a fast vertex over an edge", () => {
+test("physics doesn't hold a vertex back at an edge", () => {
+  // The user (2026-11-26): don't try to keep the drawing's structure. Until then a crossing guard
+  // (PrEd) stopped a vertex flung at an edge two radii short of it, and made all motion stiff.
   const [a, b, v] = [vertex(0, 100, 250), vertex(1, 500, 250), vertex(2, 300, 200)];
   a.fx = a.x;
   a.fy = a.y;
@@ -424,10 +396,169 @@ test("physics never carries a fast vertex over an edge", () => {
   const sim = createSimulation();
   refreshForces(sim, [a, b, v], [link(a, b)]);
   sim.alpha(START_ALPHA);
-  for (let t = 0; t < 300; t++) {
+  for (let t = 0; t < 20; t++) {
     v.vy = 200; // flung at the edge every tick
     sim.tick();
-    // It stops a radius short of touching the edge (regression: it used to touch it).
-    assert.ok(v.y! < 250 - 2 * NODE_RADIUS + 0.5, `tick ${t}: vertex got to y = ${v.y!.toFixed(1)}`);
   }
+  assert.ok(v.y! > 250 + NODE_RADIUS, `the vertex stopped at y = ${v.y!.toFixed(1)}, the edge is at 250`);
+});
+
+// ---- Untangling (the user, 2026-11-25: physics may change the structure; research/07) ----
+
+const closestToEdge = (vertices: Vertex[], links: Link[]) => {
+  let closest = Infinity;
+  for (const l of links) for (const v of vertices) if (v !== l.source && v !== l.target) closest = Math.min(closest, distanceToEdge(v, l));
+  return closest;
+};
+
+// Force mode settled on a demo graph, then vertex `id` dragged onto the middle of edge a-b (and
+// `past` px beyond it) in `steps` moves and dropped. `onTick` sees every tick after the drop.
+function dropOnEdge(name: string, id: number, a: number, b: number, past: number, steps: number, onTick = (_: Vertex[]) => {}) {
+  const { vertices, links } = build(DRAWINGS[name]);
+  const sim = settle(vertices, links);
+  const before = crossings(links);
+  const byId = new Map(vertices.map((v) => [v.id, v]));
+  const [v, ea, eb] = [byId.get(id)!, byId.get(a)!, byId.get(b)!];
+  const [mx, my] = [(ea.x! + eb.x!) / 2, (ea.y! + eb.y!) / 2];
+  const away = Math.hypot(mx - v.x!, my - v.y!);
+  const [x, y] = [mx + ((mx - v.x!) / away) * past, my + ((my - v.y!) / away) * past];
+  sim.alphaTarget(0.3).alpha(0.3);
+  startDrag(v, vertices);
+  const [x0, y0] = [v.x!, v.y!];
+  for (let step = 1; step <= steps + 10; step++) {
+    const k = Math.min(step, steps) / steps;
+    moveDrag(v, x0 + (x - x0) * k, y0 + (y - y0) * k);
+    tick(sim);
+  }
+  endDrag(v);
+  sim.alphaTarget(0).alpha(DROP_ALPHA);
+  while (sim.alpha() > sim.alphaMin()) {
+    tick(sim);
+    onTick(vertices);
+  }
+  releaseDropped(vertices);
+  return { vertices, links, before };
+}
+
+for (const past of [0, 10, 40]) {
+  test(`a vertex dropped onto an edge leaves no tangle (dodecahedron, ${past} px past the edge)`, () => {
+    // The user's screenshot (2026-11-25): vertex 0 dropped on edge 9-10 sat on it, with edges
+    // running through vertices. Physics kept that, or turned it into 2-3 crossings, for good.
+    const { vertices, links } = dropOnEdge("dodecahedron", 0, 9, 10, past, 3);
+    assert.equal(crossings(links), 0);
+    const closest = closestToEdge(vertices, links);
+    assert.ok(closest > NODE_RADIUS * 2, `a vertex is only ${closest.toFixed(0)} px from an edge`);
+  });
+}
+
+test("crossings a drop made are taken away again (K5)", () => {
+  // Found by dropping every vertex onto edges: this drop left K5 with 3 crossings instead of 1.
+  const { links, before } = dropOnEdge("k5", 0, 1, 2, 30, 30);
+  assert.equal(before, 1);
+  assert.equal(crossings(links), 1);
+});
+
+test("untangling glides vertices to their new places instead of jumping", () => {
+  let fastest = 0;
+  let previous: number[][] = [];
+  dropOnEdge("dodecahedron", 0, 9, 10, 10, 3, (vertices) => {
+    vertices.forEach((v, i) => previous[i] && (fastest = Math.max(fastest, Math.hypot(v.x! - previous[i][0], v.y! - previous[i][1]))));
+    previous = vertices.map((v) => [v.x!, v.y!]);
+  });
+  assert.ok(fastest < 30, `a vertex moved ${fastest.toFixed(0)} px in one tick`);
+});
+
+test("untangling never adds a crossing, and every hop takes one away or frees a vertex", () => {
+  let seed = 11;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let round = 0; round < 30; round++) {
+    const vertices = Array.from({ length: 12 }, (_, i) => vertex(i, 40 + random() * 720, 40 + random() * 420));
+    const links: Link[] = [];
+    for (let i = 0; i < 18; i++) {
+      const [u, v] = [Math.floor(random() * 12), Math.floor(random() * 12)];
+      if (u !== v) links.push(link(vertices[u], vertices[v]));
+    }
+    const nearMisses = () => {
+      let count = 0;
+      for (const l of links) for (const v of vertices) if (v !== l.source && v !== l.target && distanceToEdge(v, l) < NODE_RADIUS * 1.5) count++;
+      for (const u of vertices) for (const v of vertices) if (u.id < v.id && Math.hypot(u.x! - v.x!, u.y! - v.y!) < u.r + v.r) count++;
+      return count;
+    };
+    const [c0, n0] = [crossings(links), nearMisses()];
+    const hops = untangle(vertices, links, 100, { left: 0, top: 0, right: 800, bottom: 500 });
+    for (const [v, x, y] of hops) [v.x, v.y] = [x, y];
+    const [c1, n1] = [crossings(links), nearMisses()];
+    assert.ok(c1 <= c0, `round ${round}: crossings went from ${c0} to ${c1}`);
+    if (hops.length > 0) assert.ok(c1 < c0 || n1 < n0, `round ${round}: ${hops.length} hops changed nothing`);
+  }
+});
+
+test("a drawing with nothing to untangle stays as it is", () => {
+  const { vertices, links } = build(DRAWINGS.dodecahedron);
+  settle(vertices, links);
+  assert.deepEqual(untangle(vertices, links, 100), []);
+});
+
+// ---- After Arrange for looks (docs/research/08) ----
+
+for (const [id, x, y] of [[10, 400, 470], [5, 400, 30], [0, 760, 250]]) {
+  test(`a drawing arranged for looks doesn't get squashed against the border (vertex ${id} dropped at ${x}, ${y})`, () => {
+    // The user's screenshot (2026-11-26): shape memory (2026-11-23 to 26) moved the whole drawing
+    // after a vertex dropped near the border, and the far side was squashed flat against it, with
+    // vertices on edges. Now physics simply tidies the drawing from there.
+    const { vertices, links } = build(looksFixture as unknown as Drawing);
+    const sim = simulation(vertices, links);
+    sim.alpha(0); // what the widget does after Arrange for looks: nothing moves until a touch
+    drag(sim, vertices, vertices.find((v) => v.id === id)!, x, y);
+    assert.equal(crossings(links), 0);
+    assert.ok(closestToEdge(vertices, links) > NODE_RADIUS * 2, "a vertex is left close to an edge");
+    const pressed = vertices.filter((v) => Math.min(v.x! - v.r, v.y! - v.r, CANVAS.width - v.r - v.x!, CANVAS.height - v.r - v.y!) < 2);
+    assert.deepEqual(pressed.map((v) => v.id), [], "vertices pressed against the border");
+  });
+}
+
+// The carpet graph of main.ipynb, circulant C24(1, 5, 7, 11), as Arrange for looks draws it: a
+// dense graph with hundreds of crossings.
+function carpet(): { vertices: Vertex[]; links: Link[] } {
+  const vertices = Array.from({ length: 24 }, (_, i) =>
+    vertex(i, 400 + 220 * Math.cos((2 * Math.PI * i) / 24), 250 + 220 * Math.sin((2 * Math.PI * i) / 24)),
+  );
+  const links: Link[] = [];
+  for (let i = 0; i < 24; i++) for (const step of [1, 5, 7, 11]) links.push(link(vertices[i], vertices[(i + step) % 24]));
+  return { vertices, links };
+}
+
+test("a dense graph touched after Arrange for looks moves smoothly instead of shaking", () => {
+  // The user (2026-11-26): the carpet jerked wildly when touched. Pushes off dozens of edges
+  // added up: vertices flew up to 330 px in one tick and shook back and forth for 3 seconds, and
+  // single-vertex untangling hopped vertices around for 10 more.
+  const { vertices, links } = carpet();
+  const sim = simulation(vertices, links);
+  sim.alpha(0);
+  let fastest = 0;
+  let previous = vertices.map((v) => [v.x!, v.y!]);
+  const second: { path: number; start: number[][] } = { path: 0, start: [] };
+  let ticks = 0;
+  const watch = () => {
+    ticks++;
+    vertices.forEach((v, i) => {
+      const step = Math.hypot(v.x! - previous[i][0], v.y! - previous[i][1]);
+      fastest = Math.max(fastest, step);
+      if (ticks > 60 && ticks <= 120) second.path += step;
+    });
+    if (ticks === 60) second.start = vertices.map((v) => [v.x!, v.y!]);
+    previous = vertices.map((v) => [v.x!, v.y!]);
+    assert.ok(!vertices.some((v) => v.hopping), `a vertex hopped at tick ${ticks}`);
+  };
+  drag(sim, vertices, vertices[0], vertices[0].x! + 5, vertices[0].y!, 5, 15, watch, watch);
+  assert.ok(fastest <= NODE_RADIUS + 1e-6, `a vertex moved ${fastest.toFixed(0)} px in one tick`);
+  // In the second second after the grab: vertices go somewhere, not back and forth.
+  const net = vertices.reduce((sum, v, i) => sum + Math.hypot(v.x! - second.start[i][0], v.y! - second.start[i][1]), 0);
+  assert.ok(ticks > 120, "the physics stopped too early to measure");
+  assert.ok(second.path < 1.5 * net + 10, `vertices moved ${second.path.toFixed(0)} px back and forth to get ${net.toFixed(0)} px further`);
+});
+
+test("untangling leaves a graph alone that is a tangle by nature", () => {
+  const { vertices, links } = carpet();
+  assert.deepEqual(untangle(vertices, links, 100), []);
 });
