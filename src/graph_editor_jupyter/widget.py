@@ -6,10 +6,14 @@ import networkx as nx
 import traitlets
 
 from .layout import initial_layout
+from .looks import looks_layout
 
 _STATIC = Path(__file__).parent / "static"
 PADDING = 20  # must match PADDING in js/src/widget.ts
 HISTORY_LIMIT = 100  # edits kept for undo
+# How Arrange redraws (docs/requirements.md, "Layout priority"): fewest crossings first (the
+# default, as the first layout), or for looks (symmetric and even, crossings allowed).
+ARRANGE_MODES = ("crossings", "looks")
 
 
 @dataclass
@@ -30,8 +34,8 @@ class GraphWidget(anywidget.AnyWidget):
     end once shown; a vertex dragged past the canvas in a zoomed-out view gets coordinates outside
     that range.
 
-    The editor's Arrange button redraws the current graph with the first-layout algorithm
-    (arrange() does the same from Python). Edits from the editor can be undone (undo/redo, also Ctrl+Z/Ctrl+Y in the editor). Undo
+    The editor's Arrange button redraws the current graph, with the first-layout algorithm
+    (fewest crossings) or for looks (symmetric and even); arrange() does the same from Python. Edits from the editor can be undone (undo/redo, also Ctrl+Z/Ctrl+Y in the editor). Undo
     restores the graph as the editor left it, so it also reverts changes made to the graph in
     Python since that edit.
     """
@@ -67,9 +71,11 @@ class GraphWidget(anywidget.AnyWidget):
         self._sync_structure()
         self.on_msg(self._on_msg)
 
-    def _best_layout(self) -> dict:
-        """Positions from the first-layout algorithm: no crossings if planar, few otherwise."""
-        pos = initial_layout(self.graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
+    def _best_layout(self, mode: str = "crossings") -> dict:
+        """Positions from the first-layout algorithm (no crossings if planar, few otherwise), or
+        for looks."""
+        place = looks_layout if mode == "looks" else initial_layout
+        pos = place(self.graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
         return {str(self._id_of[node]): list(p) for node, p in pos.items()}
 
     def _register(self, node) -> int:
@@ -145,9 +151,13 @@ class GraphWidget(anywidget.AnyWidget):
         self.can_undo = bool(self._undo)
         self.can_redo = bool(self._redo)
 
-    def arrange(self) -> None:
-        """Redraw the graph like the first layout: no crossings if planar, few otherwise."""
-        self._on_msg(self, {"type": "arrange"}, [])
+    def arrange(self, mode: str = "crossings") -> None:
+        """Redraw the graph. "crossings" (the default) draws it like the first layout: no
+        crossings if planar, few otherwise. "looks" goes for a symmetric, even drawing, such as
+        the Petersen graph as a pentagon around a pentagram, even if edges cross more."""
+        if mode not in ARRANGE_MODES:
+            raise ValueError(f"mode must be one of {ARRANGE_MODES}, not {mode!r}")
+        self._on_msg(self, {"type": "arrange", "mode": mode}, [])
 
     def undo(self) -> None:
         """Revert the last edit made in the editor."""
@@ -188,7 +198,11 @@ class GraphWidget(anywidget.AnyWidget):
         finally:
             if kind == "arrange":
                 # Also ends the "Arranging..." state in the front end, even if layout failed.
-                self.send({"type": "set_positions", "positions": self.positions, "settle": True})
+                # The mode tells it how force mode treats the new drawing (js/src/widget.ts).
+                self.send({
+                    "type": "set_positions", "positions": self.positions, "settle": True,
+                    "mode": _arrange_mode(content),
+                })
 
     def _apply(self, kind, content: dict) -> bool:
         """Applies one edit; returns whether anything changed."""
@@ -219,10 +233,16 @@ class GraphWidget(anywidget.AnyWidget):
             self.graph.remove_edge(u, v)
             return True
         if kind == "arrange":
-            # Same algorithm as the first layout, on the graph as it is now.
-            new = self._best_layout()
+            # The first-layout algorithm or the looks layout, on the graph as it is now.
+            new = self._best_layout(_arrange_mode(content))
             changed = new != self.positions
             self.positions = new
             return changed
         # The front end sends this when a drag starts; the new positions follow in `positions`.
         return kind == "move"
+
+
+def _arrange_mode(content: dict) -> str:
+    """The Arrange mode a message asks for; the default for a missing or unknown one."""
+    mode = content.get("mode")
+    return mode if mode in ARRANGE_MODES else ARRANGE_MODES[0]

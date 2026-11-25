@@ -15,6 +15,7 @@ Shared notes for the team (and for our AI assistants). Read these before startin
 | [research/05-landscape-review.md](research/05-landscape-review.md) | Build or adopt: existing widgets and libraries for every part of the project. |
 | [research/06-interaction-review.md](research/06-interaction-review.md) | Our gestures checked against usability guidelines and user complaints; why undo exists and double-click no longer deletes. |
 | [research/07-force-mode-feel.md](research/07-force-mode-feel.md) | Force mode that feels like CS Academy's (professor, 2026-11-05): CS Academy measured, every round of changes with the reasons, and what force mode does now. |
+| [research/08-layout-for-looks.md](research/08-layout-for-looks.md) | Arrange for looks (2026-11-23): symmetric drawings next to fewest crossings, how they are found and scored, and what force mode does with them. |
 
 ## Using these docs with an AI assistant
 

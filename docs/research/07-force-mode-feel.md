@@ -114,13 +114,47 @@ Holding a leaf still for two seconds now moves the rest of the tree by up to 12 
 
 Then the tree could go past the canvas. During a drag, the room physics keeps vertices in was worked out again from every vertex, with a 16 px margin, on every pointer move; wherever physics pushed a vertex against the border (a parent pushed up by a child dragged above it), the border moved out 16 px more, and the graph walked off. Also, vertices 20 px from the edge, where the first layout puts them, already grew the room past the canvas. Now during a drag only the dragged vertex grows the room, and only vertices sticking out of the canvas grow it at all. Dragging a leaf of the tree to the top and wiggling it there for three seconds keeps every vertex on the canvas.
 
+**Tenth round: physics may change the structure (2026-11-25).** A screenshot from the user: the dodecahedron with vertex 0 dropped onto edge 9-10, the edges 1-0 and 0-19 running along 9 and 11, all lines on top of each other. Physics could not repair it: PrEd never lets a vertex pass over an edge, so the dropped vertex was held on the edge until the simulation stopped (about 10 s), and then pushed off to whichever side it happened to be on. The user: "you can change the structure itself, at times it looks very weird."
+
+Measured by dropping every vertex of the demo graphs onto (and 12 or 30 px past) its nearest edge: 9 of 15 such drops left K5 with extra crossings (up to 3 instead of 1), and quick drops of vertex 0 onto edge 9-10 left the dodecahedron with 2-3 crossings for good.
+
+Now force mode untangles (`untangle` and `forceUntangle` in `forces.ts`). When the graph has nearly settled (alpha below 0.1), every vertex in a crossing or a near-miss (closer than 24 px to an edge it isn't part of, or on another vertex) tries about 150 other places: rings of 0.5, 1 and 1.5 edge lengths around where it is and around the middle of its neighbours, also beyond edges. It moves if that takes away crossings, or, with the same crossings, takes away near-misses; among equally good places it takes the one where its edges are nearest the common length. One vertex at a time, the best move first, up to 8 per round. The vertices glide there over 20 ticks, held like a dragged vertex so PrEd doesn't stop them, and the physics warms up again to tidy around them. Every hop lowers the crossings or the near-misses and PrEd never adds any, so this ends; at most 6 rounds per drag anyway. The dropped vertex stays where it was dropped unless moving it is the only way to free it. A tree vertex drawn in levels keeps its level.
+
+After this, none of the 162 drops leaves an extra crossing or a vertex closer than 30 px to an edge, in any demo graph. One round of the search takes about 20 ms at most (capped, also on random graphs with 300 vertices), once each time the graph settles.
+
+**Eleventh round: no more keeping the structure (2026-11-26).** The user, after trying it: still didn't like how the graph moved, and "don't try to keep the picture as it is, let the structure get spoiled". So the crossing guard (PrEd's limit on moves, `forceKeepCrossings`) is gone: vertices pass over edges, and crossings come and go as in CS Academy. What stays: edges push vertices off themselves (up to 64 px, hard within 32 px), so nothing rests on an edge and a slow drag still pushes an edge ahead; and untangling (tenth round), which now has to stop after 6 rounds per drag because the physics may bring crossings back.
+
+Measured in Node:
+
+- Tidying the first layout of every demo graph still adds no crossing, and none of the 162 drops onto edges leaves an extra crossing or a vertex on an edge.
+- Five random drags in a row, 20 times per graph (often right through the graph): without untangling, physics alone ends with extra crossings in 20 of 20 dodecahedron runs (16 on average), 17 of 20 Petersen and 13 of 20 K5 runs. With untangling: 7, 1 and 0 runs. So untangling stays.
+- A drop settles about four times faster: the guard checked every vertex against every edge each tick.
+
+In a tree scrambled by many drags, untangling can run out of its 6 rounds with a vertex still close to an edge (3 of 20 such runs): the levels keep pulling it back.
+
+**Twelfth round: a dense graph shook (2026-11-26).** The user: the carpet graph of `main.ipynb` (circulant C24(1, 5, 7, 11), every vertex with 8 edges) jerked hard when touched after Arrange for looks. Measured in Node, touching vertex 0:
+
+- In the first ticks vertices flew up to 330 px in one tick, and for 3 seconds they shook: 15 700 px of motion in the first second for 600 px of progress. Switching forces off one at a time showed the cause: the push off edges. Each vertex is near dozens of edges and each edge near dozens of vertices, and their pushes added up until every tick overshot.
+- Then untangling hopped vertices for another 10 seconds: with hundreds of crossings, almost every single hop takes a few away.
+
+Fixes:
+
+- **Pushes off edges add up to at most three on one vertex.** Beyond that (counting the pushes back on an edge's ends by how much of each push they take) they are scaled down. Averaging every vertex's pushes was tried first and was too weak: in the dodecahedron a vertex is often near two or three edges, and drops onto edges left crossings again.
+- **No vertex moves more than 16 px in one tick** (`forceMaxStep`, the last force), whatever the forces add up to. Graphs follow a drag as before; 12 px was too tight: a vertex held on an edge in the dodecahedron then made the graph shake.
+- **Untangling leaves a drawing alone that has more crossings than edges**: such a graph is a tangle by nature.
+
+After this, in headless Chrome: no vertex moves more than 16 px per frame, and from the second second on the vertices' path equals their progress (no back and forth); no hops. The sparse demo graphs behave as before: none of the 162 drops onto edges leaves a crossing or a vertex on an edge.
+
 **What force mode does now**
+
+This is force mode after the first layout and after Arrange for fewest crossings. After Arrange for looks nothing moves until a vertex is touched, and then the same (from 2026-11-23 to 2026-11-26 force mode kept the looks drawing's shape instead, see [research/08](08-layout-for-looks.md)).
 
 - **It is a layout, not a spring back to fixed spots.** Every edge pulls towards one common length (both ends equally), vertices closer than 2.5 edge lengths push each other apart, fading smoothly to nothing, and vertices are pushed off edges they aren't part of (up to 64 px away). The drawing drifts towards an even, tidy one; the simulation cools over about 8 seconds, so this happens little by little.
 - **It uses the canvas.** When force mode starts (and after Arrange), a copy of the drawing is tidied first to see how big it gets, and the common edge length is set so the tidied drawing fills 90% of the canvas in its tighter direction. A weak pull also stretches it in the other direction (at most 1.3 times) and, while no vertex is held or dropped, moves it to the middle.
 - **Opening the editor and Arrange show the tidied drawing straight away**: the vertices are placed (or glide) where force mode would take them, so nothing moves afterwards. After Arrange the view also glides, keeping its zoom, so the redrawn graph is in the middle of what the user sees (the user, 2026-11-05). The view moves, not the vertices: moving the vertices into the view would fight the pull to the middle of the canvas. On big graphs the trial is cut short so turning force on doesn't hang (a 225-vertex grid: 0.4 s), and it guesses the size less exactly.
 - **Trees drawn in levels stay drawn in levels**: each level on one horizontal line, every vertex at least 48 px below its parent.
-- **The topology is kept (PrEd).** Each tick, a vertex may come at most half of the distance minus 32 px closer to an edge it isn't part of, and so may each end of the edge come towards the vertex; the rest of each move is kept. So no vertex passes over an edge and no edge over a vertex, and the crossings stay what they were: 0 for the planar demo graphs, 2 for Petersen, 1 for K5, also under random kicks in a test. Moving away is never limited, so nothing gets stuck next to an edge. Only a vertex dragged by hand can change the crossings; a drawing tangled that way stays tangled until Arrange.
+- **The structure isn't held on to** (since 2026-11-26, eleventh round; from 2026-11-05 to then a guard kept the crossings exactly). Vertices may pass over edges, so crossings come and go when vertices are dragged. Tidying the first layout still keeps its crossings: 0 for the planar demo graphs, 2 for Petersen, 1 for K5.
+- **Untangling** (since 2026-11-25, tenth round): once the graph has nearly settled, a vertex in a crossing or lying on an edge glides to a place with fewer crossings, or the same crossings and no vertex on an edge, if there is one.
 - **The dragged vertex is held exactly under the pointer** (0–1 px), as in CS Academy. Edges and vertices in its way move aside: dragged slowly at an edge, the vertex pushes it ahead (133 px in the test) instead of crossing it; a quick move still gets across.
 - **The graph comes after it**: its edges pull their neighbours, and theirs. Dragging a tree leaf 250 px moved the rest of the tree 90–120 px during the drag.
 - **After the drop the vertex stays where it was dropped** until the simulation cools down, and the rest of the graph comes closer and settles around it, as in CS Academy. The physics restarts warmer after a drop (alpha 0.5).
@@ -129,7 +163,7 @@ Then the tree could go past the canvas. During a drag, the room physics keeps ve
 
 This replaces the gentle mode decided on 2026-10-23 ([research/03](03-existing-editors.md)): turning force on no longer leaves the first layout almost unchanged (vertices of the demo graphs move up to 40–290 px), but it keeps its crossings, which is what the first layout is for. Vertices pushed aside by a drag no longer spring back to their old spots; they settle wherever the layout puts them.
 
-**Known:** PrEd improves a drawing locally; it doesn't search for the best drawing with the same crossings, and a drawing tangled or squeezed by drags stays that way (only stretched back to 60% of the canvas) until Arrange, which redraws from scratch. In a tree, dragging the root to the bottom of the canvas can't keep the tree upright: there is no room below it.
+**Known:** force mode improves a drawing locally; it doesn't search for the best drawing. Untangling moves one vertex at a time, so a tangle that only moving several vertices together undoes, or a drawing squeezed by drags without crossings or near-misses, stays until Arrange, which redraws from scratch. In a tree, dragging the root to the bottom of the canvas can't keep the tree upright: there is no room below it.
 
 **Open:** CS Academy keeps a dropped vertex fixed until it is clicked; ours keeps it fixed only until the physics cools down (about 8 seconds). Ask the team whether fixed vertices (with a click to unfix) are wanted.
 

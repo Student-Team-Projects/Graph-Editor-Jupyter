@@ -68,6 +68,13 @@ function labelWidth(label: string): number {
   return measureContext.measureText(label).width;
 }
 
+type ArrangeMode = "crossings" | "looks";
+const ARRANGE_LABEL = "Arrange ▾";
+const ARRANGE_CHOICES: [ArrangeMode, string, string][] = [
+  ["crossings", "Fewest crossings", "As few edge crossings as possible; none if the graph is planar"],
+  ["looks", "Looks", "Symmetric and even, like a circle or rings, even if more edges cross"],
+];
+
 function button(text: string, title: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "ge-button";
@@ -96,7 +103,9 @@ export class GraphEditor {
   private readonly forceButton = button("Force: off", "Turn physics on or off");
   private readonly undoButton = button("Undo", "Undo (Ctrl+Z)");
   private readonly redoButton = button("Redo", "Redo (Ctrl+Y)");
-  private readonly arrangeButton = button("Arrange", "Redraw the graph with as few edge crossings as possible");
+  private readonly arrangeButton = button(ARRANGE_LABEL, "Redraw the graph: fewest crossings, or for looks");
+  // The choice Arrange offers (the user, 2026-11-23): its own little menu under the button.
+  private readonly arrangeMenu = document.createElement("div");
   private readonly glide = new Glide();
   private readonly help = document.createElement("span");
   // Dashed line from the selected vertex to the pointer: the edge the next click would add.
@@ -120,7 +129,22 @@ export class GraphEditor {
     const zoomIn = button("+", "Zoom in");
     const fit = button("Fit", "Show the whole graph");
     this.help.className = "ge-help";
-    toolbar.append(this.forceButton, this.arrangeButton, this.undoButton, this.redoButton, zoomOut, zoomIn, fit);
+    const arrangeAnchor = document.createElement("span");
+    arrangeAnchor.className = "ge-menu-anchor";
+    this.arrangeMenu.className = "ge-menu";
+    this.arrangeMenu.setAttribute("role", "menu");
+    this.arrangeMenu.hidden = true;
+    this.arrangeButton.setAttribute("aria-haspopup", "menu");
+    this.arrangeButton.setAttribute("aria-expanded", "false");
+    for (const [mode, label, title] of ARRANGE_CHOICES) {
+      const item = button(label, title);
+      item.classList.add("ge-menu-item");
+      item.setAttribute("role", "menuitem");
+      item.dataset.mode = mode;
+      this.arrangeMenu.append(item);
+    }
+    arrangeAnchor.append(this.arrangeButton, this.arrangeMenu);
+    toolbar.append(this.forceButton, arrangeAnchor, this.undoButton, this.redoButton, zoomOut, zoomIn, fit);
 
     this.container.className = "ge-canvas";
     this.container.tabIndex = 0;
@@ -162,7 +186,21 @@ export class GraphEditor {
     signal.addEventListener("abort", () => this.glide.cancel());
 
     this.forceButton.addEventListener("click", () => this.setForce(!this.force), { signal });
-    this.arrangeButton.addEventListener("click", () => this.arrange(), { signal });
+    this.arrangeButton.addEventListener("click", () => this.showArrangeMenu(this.arrangeMenu.hidden), { signal });
+    this.arrangeMenu.addEventListener("click", (e) => {
+      const mode = (e.target as HTMLElement).closest<HTMLElement>("[data-mode]")?.dataset.mode;
+      if (mode === "crossings" || mode === "looks") this.arrange(mode);
+    }, { signal });
+    // The menu closes on a click anywhere else, and on Escape.
+    document.addEventListener("pointerdown", (e) => {
+      if (!arrangeAnchor.contains(e.target as Node)) this.showArrangeMenu(false);
+    }, { signal });
+    arrangeAnchor.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || this.arrangeMenu.hidden) return;
+      e.stopPropagation();
+      this.showArrangeMenu(false);
+      this.arrangeButton.focus();
+    }, { signal });
     this.undoButton.addEventListener("click", () => this.edit({ type: "undo" }), { signal });
     this.redoButton.addEventListener("click", () => this.edit({ type: "redo" }), { signal });
     // After a toolbar click, keyboard shortcuts (Ctrl+Z, Delete) go to the graph again.
@@ -285,6 +323,7 @@ export class GraphEditor {
     keepInside(v, this.room ?? { left: 0, top: 0, right: this.w, bottom: this.h });
   }
 
+  // What force mode takes from the drawing as it is now: a common edge length to tidy towards.
   private captureRestState(): void {
     this.updateRoom();
     captureRestState(this.simulation, [...this.vertices.values()], this.links, { width: this.w, height: this.h }, this.room);
@@ -377,19 +416,26 @@ export class GraphEditor {
   }
 
   // Layout can take a few seconds for non-planar graphs; the reply is a set_positions message.
-  private arrange(): void {
+  private showArrangeMenu(open: boolean): void {
+    this.arrangeMenu.hidden = !open;
+    this.arrangeButton.setAttribute("aria-expanded", String(open));
+    if (open) this.arrangeMenu.querySelector<HTMLButtonElement>("button")?.focus();
+  }
+
+  private arrange(mode: ArrangeMode): void {
+    this.showArrangeMenu(false);
     this.arrangeButton.disabled = true;
     this.arrangeButton.textContent = "Arranging…";
-    this.edit({ type: "arrange" });
+    this.edit({ type: "arrange", mode });
   }
 
   // After Arrange, undo or redo, vertices glide to the spots Python sent. After Arrange
   // (`settle`), force mode then tidies up as when the editor opens.
   private onCustomMessage(msg: unknown): void {
-    const m = msg as { type?: string; positions?: Record<string, [number, number]>; settle?: boolean };
+    const m = msg as { type?: string; positions?: Record<string, [number, number]>; settle?: boolean; mode?: string };
     if (m.type !== "set_positions" || !m.positions) return;
     this.arrangeButton.disabled = false;
-    this.arrangeButton.textContent = "Arrange";
+    this.arrangeButton.textContent = ARRANGE_LABEL;
     const moves: { v: Vertex; x0: number; y0: number; x1: number; y1: number }[] = [];
     for (const v of this.vertices.values()) {
       const p = m.positions[String(v.id)];
@@ -398,13 +444,17 @@ export class GraphEditor {
       moves.push({ v, x0: v.x ?? 0, y0: v.y ?? 0, x1, y1 });
     }
     this.simulation.stop();
-    // After Arrange in force mode, glide straight to where force mode would tidy the new layout,
-    // instead of to the layout itself with force mode moving everything again afterwards.
-    const tidy = this.force && (m.settle ?? false);
-    if (tidy) {
+    // After Arrange in force mode, glide straight to where force mode will leave the new drawing:
+    // tidied (fewest crossings), instead of to the layout itself with force mode moving everything
+    // again afterwards. Looks: exactly as laid out, and physics stays at rest until a vertex is
+    // touched; then it tidies as usual and the drawing loses its looks (the user, 2026-11-26).
+    const ready = this.force && (m.settle ?? false);
+    if (ready) {
       for (const move of moves) [move.v.x, move.v.y] = [move.x1, move.y1];
       this.captureRestState();
-      const ends = tidied(this.simulation, [...this.vertices.values()], this.links);
+      const ends = m.mode === "looks"
+        ? new Map<Vertex, [number, number]>()
+        : tidied(this.simulation, [...this.vertices.values()], this.links);
       for (const move of moves) {
         [move.v.x, move.v.y] = [move.x0, move.y0];
         [move.x1, move.y1] = ends.get(move.v) ?? [move.x1, move.y1];
@@ -426,21 +476,21 @@ export class GraphEditor {
       }
       if (pan1 !== pan0) this.cy.pan({ x: pan0.x + (pan1.x - pan0.x) * k, y: pan0.y + (pan1.y - pan0.y) * k });
       this.updatePositions();
-    }, () => this.finishGlide(tidy), reduceMotion);
+    }, () => this.finishGlide(ready), reduceMotion);
   }
 
-  // `tidied`: the vertices glided to a drawing force mode has already tidied (after Arrange), so
-  // its edge length stays and physics has nothing left to do.
-  private finishGlide(tidied: boolean): void {
+  // `ready`: the vertices glided to the drawing force mode will leave as it is (after Arrange; its
+  // rest state was captured before the glide), so physics has nothing left to do.
+  private finishGlide(ready: boolean): void {
     for (const v of this.vertices.values()) {
       v.vx = 0;
       v.vy = 0;
     }
     this.updateRoom(); // Undo may bring vertices back from past the canvas
-    if (!tidied) this.captureRestState();
+    if (!ready) this.captureRestState();
     else this.coolDown();
     this.updatePositions();
-    if (tidied) this.sendPositions();
+    if (ready) this.sendPositions();
   }
 
   // After the drawing was tidied at once, the simulation is as if it had run and cooled down. It
