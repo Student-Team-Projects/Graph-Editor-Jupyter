@@ -59,7 +59,7 @@ The existing code is a mess with many bugs and mistakes. He named the planarity 
 
 - **A full rewrite is acceptable** to the professor. The old version stays available under a git tag.
 - **The whole team agrees to use TypeScript** for the UI, with Python for the core.
-- **Scope:** only the three required behaviours above. Directed and weighted graphs are optional extras, to consider only if they turn out to be quick. Focus on the UI first.
+- **Scope:** only the three required behaviours above. Directed and weighted graphs are optional extras, to consider only if they turn out to be quick. Focus on the UI first. (Changed 2026-11-26: directed graphs and showing weights are done, see "Labels".)
 
 ## Labels (decided 2026-10-23)
 
@@ -70,6 +70,23 @@ Needed in the new version:
 - **Show/hide toggle** for labels.
 
 API: only `edit(graph)` is required. Compatibility with the old `edit(graph, color_dict)` is not needed.
+
+**How a graph looks, from its attributes (decided by Roman Volochai, 2026-11-26).** Asked for: edge weights, vertex colors, other names for vertices, vertex size and edge width, edge direction. The attribute names are the ones NetworkX and `nx.draw` use, so graphs prepared for `nx.draw` show the same way without changes:
+
+| Attribute | Of | Shown as |
+|---|---|---|
+| `label` | vertex | its name in the circle, instead of the node itself |
+| `color` | vertex | fill; the text turns black or white, whichever reads better |
+| `size` | vertex | diameter in pixels (8 to 200); never smaller than the name needs |
+| `weight` | edge | text on the middle of the edge |
+| `label` | edge | text on the edge, instead of the weight |
+| `color` | edge | line (and arrow) color |
+| `width` | edge | line width in pixels (0.5 to 20) |
+| `nx.DiGraph` | graph | arrows; an edge drawn in the editor goes from the first vertex clicked to the second |
+
+Colors are CSS colors (`"red"`, `"#1f77b4"`, `"rgb(0, 0, 255)"`) or RGB(A) tuples as in matplotlib. A value that can't be used (an unknown color, a size that isn't a positive number) is ignored and the default look is used, so a graph made for another tool still opens. Layouts ignore direction and weights. Multigraphs are still not supported.
+
+Status: showing labels, weights and colors is done; editing attributes in a side panel and the show/hide toggle are not yet.
 
 ## Deadline
 
