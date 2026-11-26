@@ -10,6 +10,11 @@ def ids(widget: GraphWidget) -> dict:
     return {n["label"]: n["id"] for n in widget.nodes}
 
 
+def pairs(widget: GraphWidget) -> list:
+    """The edges the front end gets, as [u, v] id pairs."""
+    return [[e["u"], e["v"]] for e in widget.edges]
+
+
 def send(widget: GraphWidget, **content):
     widget._on_msg(widget, content, [])
 
@@ -18,7 +23,7 @@ def test_widget_sends_graph_by_id():
     widget = GraphWidget(nx.Graph([("a", "b"), ("b", "c")]))
     i = ids(widget)
     assert set(i) == {"a", "b", "c"}
-    assert sorted(map(sorted, widget.edges)) == sorted([sorted([i["a"], i["b"]]), sorted([i["b"], i["c"]])])
+    assert sorted(map(sorted, pairs(widget))) == sorted([sorted([i["a"], i["b"]]), sorted([i["b"], i["c"]])])
     assert set(widget.positions) == {str(v) for v in i.values()}
 
 
@@ -42,7 +47,7 @@ def test_add_and_remove_edge_change_the_graph():
     i = ids(widget)
     send(widget, type="add_edge", u=i["0"], v=i["2"])
     assert graph.has_edge(0, 2)
-    assert [i["0"], i["2"]] in widget.edges
+    assert [i["0"], i["2"]] in pairs(widget)
     send(widget, type="remove_edge", u=i["2"], v=i["0"])
     assert not graph.has_edge(0, 2)
     assert widget.edges == []
@@ -114,16 +119,16 @@ def test_python_side_changes_are_picked_up():
     assert str(ids(widget)["new"]) in widget.positions
 
 
-@pytest.mark.parametrize("graph", [nx.DiGraph([(0, 1)]), nx.MultiGraph([(0, 1), (0, 1)])])
+@pytest.mark.parametrize("graph", [nx.MultiGraph([(0, 1), (0, 1)]), nx.MultiDiGraph([(0, 1)])])
 def test_unsupported_graph_types_get_a_clear_error(graph):
-    with pytest.raises(TypeError, match="undirected simple graphs"):
+    with pytest.raises(TypeError, match="simple graphs"):
         GraphWidget(graph)
 
 
 def test_self_loops_are_sent():
     widget = GraphWidget(nx.Graph([(0, 0), (0, 1)]))
     i = ids(widget)
-    assert [i["0"], i["0"]] in widget.edges
+    assert [i["0"], i["0"]] in pairs(widget)
 
 
 def test_front_end_bundle_exists():
@@ -254,7 +259,7 @@ def test_python_history_syncs_external_nodes(first_step):
     node_id = ids(widget)["external"]
     assert widget._node_of[node_id] == "external"
     assert str(node_id) in widget.positions
-    assert [ids(widget)["0"], node_id] in widget.edges
+    assert [ids(widget)["0"], node_id] in pairs(widget)
     getattr(widget, first_step)()
     getattr(widget, other_step)()
     assert ids(widget)["external"] == node_id

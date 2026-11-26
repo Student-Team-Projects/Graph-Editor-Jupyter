@@ -5,6 +5,7 @@ import anywidget
 import networkx as nx
 import traitlets
 
+from .appearance import edge_view, node_view
 from .layout import initial_layout
 from .looks import looks_layout
 
@@ -34,6 +35,11 @@ class GraphWidget(anywidget.AnyWidget):
     end once shown; a vertex dragged past the canvas in a zoomed-out view gets coordinates outside
     that range.
 
+    Vertex and edge attributes set how they look (appearance.py): ``label``, ``color`` and
+    ``size`` of a vertex; ``weight`` or ``label``, ``color`` and ``width`` of an edge. A directed
+    graph (nx.DiGraph) is drawn with arrows, and an edge drawn in the editor goes from the first
+    vertex clicked to the second.
+
     The editor's Arrange button redraws the current graph, with the first-layout algorithm
     (fewest crossings) or for looks (symmetric and even); arrange() does the same from Python. Edits from the editor can be undone (undo/redo, also Ctrl+Z/Ctrl+Y in the editor). Undo
     restores the graph as the editor left it, so it also reverts changes made to the graph in
@@ -43,8 +49,11 @@ class GraphWidget(anywidget.AnyWidget):
     _esm = _STATIC / "widget.js"
     _css = _STATIC / "widget.css"
 
-    nodes = traitlets.List(traitlets.Dict()).tag(sync=True)  # [{"id": int, "label": str}]
-    edges = traitlets.List(traitlets.List(traitlets.Int())).tag(sync=True)  # [[id, id]]
+    # [{"id": int, "label": str, "color"?: str, "size"?: float}]
+    nodes = traitlets.List(traitlets.Dict()).tag(sync=True)
+    # [{"u": id, "v": id, "label"?: str, "color"?: str, "width"?: float}], u -> v if directed
+    edges = traitlets.List(traitlets.Dict()).tag(sync=True)
+    directed = traitlets.Bool(False).tag(sync=True)
     positions = traitlets.Dict().tag(sync=True)  # {str(id): [x, y]}
     width = traitlets.Int(800).tag(sync=True)
     height = traitlets.Int(500).tag(sync=True)
@@ -52,13 +61,14 @@ class GraphWidget(anywidget.AnyWidget):
     can_redo = traitlets.Bool(False).tag(sync=True)
 
     def __init__(self, graph: nx.Graph, **kwargs):
-        if graph.is_directed() or graph.is_multigraph():
+        if graph.is_multigraph():
             raise TypeError(
-                "edit() supports undirected simple graphs (nx.Graph) for now; "
-                f"got {type(graph).__name__}. Try nx.Graph(graph) to convert."
+                "edit() supports simple graphs (nx.Graph, nx.DiGraph) for now; "
+                f"got {type(graph).__name__}. Try nx.Graph(graph) or nx.DiGraph(graph) to convert."
             )
         super().__init__(**kwargs)
         self.graph = graph
+        self.directed = graph.is_directed()
         self._node_of: dict[int, object] = {}
         self._id_of: dict[object, int] = {}
         self._next_id = 0
@@ -75,7 +85,9 @@ class GraphWidget(anywidget.AnyWidget):
         """Positions from the first-layout algorithm (no crossings if planar, few otherwise), or
         for looks."""
         place = looks_layout if mode == "looks" else initial_layout
-        pos = place(self.graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
+        # Layouts ignore direction: u -> v and v -> u are one line to place.
+        graph = self.graph.to_undirected(as_view=True) if self.directed else self.graph
+        pos = place(graph, size=(self.width - 2 * PADDING, self.height - 2 * PADDING))
         return {str(self._id_of[node]): list(p) for node, p in pos.items()}
 
     def _register(self, node) -> int:
@@ -86,8 +98,10 @@ class GraphWidget(anywidget.AnyWidget):
         return node_id
 
     def _sync_structure(self) -> None:
-        self.nodes = [{"id": self._id_of[n], "label": str(n)} for n in self.graph.nodes]
-        self.edges = [[self._id_of[u], self._id_of[v]] for u, v in self.graph.edges]
+        self.nodes = [{"id": self._id_of[n], **node_view(n, d)} for n, d in self.graph.nodes(data=True)]
+        self.edges = [
+            {"u": self._id_of[u], "v": self._id_of[v], **edge_view(d)} for u, v, d in self.graph.edges(data=True)
+        ]
 
     def _sync_from_graph(self) -> None:
         """Catch up with changes made to the graph in Python after the widget was shown."""

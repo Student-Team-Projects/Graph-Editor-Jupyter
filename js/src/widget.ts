@@ -1,6 +1,6 @@
 import type { AnyModel, RenderProps } from "@anywidget/types";
 import cytoscape, { type Core, type EventObject, type NodeSingular } from "cytoscape";
-import { edgeId, idOfNode, nodeId, toElements, type ModelNode } from "./elements";
+import { edgeId, idOfNode, nodeId, toElements, type ModelEdge, type ModelNode } from "./elements";
 import {
   BORDER_GAP,
   captureRestState,
@@ -36,13 +36,14 @@ import {
 } from "./interaction";
 import { forgetPageOffset } from "./pageOffset";
 import { Glide } from "./glide";
-import { graphStyle, type Colors } from "./style";
+import { graphStyle, readableText, type Colors } from "./style";
 import "./widget.css";
 
 // Synced with GraphWidget traits in widget.py.
 interface Model {
   nodes: ModelNode[];
-  edges: [number, number][];
+  edges: ModelEdge[];
+  directed: boolean;
   positions: Record<string, [number, number]>;
   width: number;
   height: number;
@@ -66,6 +67,36 @@ function labelWidth(label: string): number {
   if (!measureContext) return label.length * 8;
   measureContext.font = LABEL_FONT;
   return measureContext.measureText(label).width;
+}
+
+// A vertex's radius: what its label needs, or half the size the graph asks for if bigger.
+function radiusOf({ label, size }: ModelNode): number {
+  return Math.max(radiusForLabel(labelWidth(label)), (size ?? 0) / 2);
+}
+
+// A color from the graph as #rrggbb, with black or white text that reads on it; null if the
+// browser doesn't know it as a color (Cytoscape would warn and draw nothing). Cached: the same
+// few colors come back on every model change.
+const paints = new Map<string, { fill: string; text: string } | null>();
+function paint(color: string): { fill: string; text: string } | null {
+  if (paints.has(color)) return paints.get(color)!;
+  let result: { fill: string; text: string } | null = null;
+  const context = document.createElement("canvas").getContext("2d");
+  if (context) {
+    // An unknown color leaves fillStyle as it was; try from two different colors to tell.
+    const parsed = ["#000001", "#000002"].map((start) => {
+      context.fillStyle = start;
+      context.fillStyle = color;
+      return String(context.fillStyle);
+    });
+    if (parsed[0] === parsed[1]) {
+      // Opaque colors come back as #rrggbb; with transparency as rgba(...), drawn as given.
+      const hex = parsed[0].startsWith("#") ? parsed[0] : null;
+      result = { fill: parsed[0], text: hex ? readableText(hex) : "" };
+    }
+  }
+  paints.set(color, result);
+  return result;
 }
 
 type ArrangeMode = "crossings" | "looks";
@@ -95,6 +126,8 @@ function themeColors(el: HTMLElement): Colors {
 export class GraphEditor {
   private vertices = new Map<number, Vertex>();
   private links: Link[] = []; // edges between two different vertices
+  private modelNodes = new Map<number, ModelNode>(); // as Python sent them, with their look
+  private directed = false;
   private selection: Selection = null;
   private force = false;
   private readonly simulation: GraphSimulation;
@@ -223,7 +256,7 @@ export class GraphEditor {
     this.bindGraphEvents();
 
     const onModelChange = () => this.loadFromModel();
-    for (const trait of ["nodes", "edges", "positions", "width", "height"]) {
+    for (const trait of ["nodes", "edges", "directed", "positions", "width", "height"]) {
       model.on(`change:${trait}`, onModelChange);
       signal.addEventListener("abort", () => model.off(`change:${trait}`, onModelChange));
     }
@@ -343,9 +376,11 @@ export class GraphEditor {
   private loadFromModel(): void {
     const positions = this.model.get("positions");
     const next = new Map<number, Vertex>();
-    for (const { id, label } of this.model.get("nodes")) {
+    this.modelNodes = new Map(this.model.get("nodes").map((n) => [n.id, n]));
+    for (const node of this.modelNodes.values()) {
+      const { id, label } = node;
       const old = this.vertices.get(id);
-      const r = radiusForLabel(labelWidth(label));
+      const r = radiusOf(node);
       if (old) {
         old.label = label;
         old.r = r;
@@ -358,31 +393,39 @@ export class GraphEditor {
     this.vertices = next;
     this.updateRoom(); // positions from Python may be past the canvas: don't push them back
 
-    const edges = this.model.get("edges").filter(([u, v]) => next.has(u) && next.has(v));
-    this.links = edges
-      .filter(([u, v]) => u !== v)
-      .map(([u, v]) => ({ source: next.get(u)!, target: next.get(v)! }));
+    this.directed = this.model.get("directed") ?? false;
+    const edges = this.model.get("edges").filter(({ u, v }) => next.has(u) && next.has(v));
+    // Physics needs one spring per pair: u -> v and v -> u of a directed graph are one line to it.
+    const pairs = new Set<string>();
+    this.links = [];
+    for (const { u, v } of edges) {
+      if (u === v || pairs.has(edgeId(u, v))) continue;
+      pairs.add(edgeId(u, v));
+      this.links.push({ source: next.get(u)!, target: next.get(v)! });
+    }
 
     if (this.selection?.kind === "vertex" && !next.has(this.selection.id)) this.selection = null;
     const s = this.selection;
-    if (s?.kind === "edge" && !edges.some(([u, v]) => edgeId(u, v) === edgeId(s.u, s.v))) this.selection = null;
+    if (s?.kind === "edge" && !edges.some(({ u, v }) => this.edgeKey(u, v) === this.edgeKey(s.u, s.v))) this.selection = null;
 
     this.syncElements(edges);
     refreshForces(this.simulation, [...this.vertices.values()], this.links);
     // Only real structure changes restart physics; position updates we sent ourselves must not.
-    const key = JSON.stringify([this.model.get("nodes"), this.model.get("edges")]);
+    const key = JSON.stringify([this.model.get("nodes"), this.model.get("edges"), this.directed]);
     if (this.force && key !== this.structureKey) this.simulation.alpha(START_ALPHA).restart();
     this.structureKey = key;
   }
 
   // Adds, updates and removes Cytoscape elements so they match the model, without
   // recreating elements that still exist (a vertex being dragged must survive).
-  private syncElements(edges: [number, number][]): void {
+  private syncElements(edges: ModelEdge[]): void {
     const wanted = toElements(
-      [...this.vertices.values()].map(({ id, label }) => ({ id, label })),
+      [...this.vertices.values()].map(({ id, label }) => this.modelNodes.get(id) ?? { id, label }),
       edges,
+      this.directed,
       (id) => ({ x: this.vertices.get(id)!.x ?? 0, y: this.vertices.get(id)!.y ?? 0 }),
-      (label) => radiusForLabel(labelWidth(label)),
+      radiusOf,
+      paint,
     );
     const wantedIds = new Set(wanted.map((e) => e.data.id));
     this.sizeContainer();
@@ -516,7 +559,7 @@ export class GraphEditor {
         node.toggleClass("ge-selected", s?.kind === "vertex" && s.id === v.id);
       }
       this.cy.edges().forEach((edge) => {
-        const selected = s?.kind === "edge" && edge.id() === edgeId(s.u, s.v);
+        const selected = s?.kind === "edge" && edge.id() === this.edgeKey(s.u, s.v);
         edge.toggleClass("ge-selected", selected);
       });
     });
@@ -603,8 +646,13 @@ export class GraphEditor {
     return [idOfNode(edge.source().id()), idOfNode(edge.target().id())];
   }
 
+  // The id of the edge u-v, or u -> v in a directed graph.
+  private edgeKey(u: number, v: number): string {
+    return edgeId(u, v, this.directed);
+  }
+
   private hasEdge(u: number, v: number): boolean {
-    return this.cy.getElementById(edgeId(u, v)).nonempty();
+    return this.cy.getElementById(this.edgeKey(u, v)).nonempty();
   }
 
   // ---- input ----
@@ -620,7 +668,7 @@ export class GraphEditor {
       this.container.focus();
       const [u, v] = this.edgeEnds(e);
       const s = this.selection;
-      const selected = s?.kind === "edge" && edgeId(s.u, s.v) === edgeId(u, v);
+      const selected = s?.kind === "edge" && this.edgeKey(s.u, s.v) === this.edgeKey(u, v);
       this.select(selected ? null : { kind: "edge", u, v });
     });
     // Plain `tap`, not `onetap`: that one waits 250 ms to rule out a double click, which made
